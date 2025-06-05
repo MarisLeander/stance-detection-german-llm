@@ -63,11 +63,12 @@ def tokenize_labels(data, tokenizer):
 
     return tokenized_inputs
 
-def encode_dataset(raw_data: list[dict[str, list[str]]], tokenizer):
+def encode_dataset(raw_data: list[dict[str, list[str]]], tokenizer, device):
     """ Encode the dataset using the tokenizer. This is needed to prepare the input data for the model.
     Args:
         raw_data (list[dict[str, list[str]]]): The raw data to be encoded. Each entry in the list corresponds to a paragraph from a speech.
         tokenizer: The tokenizer to be used for encoding.
+        device: The torch device ('cuda' or 'cpu')
     Returns:
         dataset (Dataset): The encoded dataset.
     """
@@ -112,13 +113,13 @@ def get_predictions(dataloader:DataLoader, model, tokenizer):
 
     preds_all= [] # Initialize lists to store predictions
 
-    for batch in dataloader:
-        print("Batch size:", len(batch["input_ids"]))
+    for batch in dataloader:     
+        # print("Batch size:", len(batch["input_ids"]))
         with torch.inference_mode():
             output = model(**batch) # unpacks the batch dictionary and passes the input IDs and attention mask to the model, which will return the logits, which are the unnormalized scores for each label.
 
         logits = output.logits                    # Logits are the unnormalized scores for each label.
-        preds  = torch.argmax(logits, dim=-1)     # take the best label for each token. We use argmax for inference since we don't need to compute the loss during inference, we just want the predicted labels. Also we won't do majority voting since (now) we only use one model.
+        preds  = torch.argmax(logits, dim=-1).cpu()     # take the best label for each token. We use argmax for inference since we don't need to compute the loss during inference, we just want the predicted labels. Also we won't do majority voting since (now) we only use one model.
         for i in range(len(preds)):
             labels = [index2label(int(i)) for i in preds[i]]
             tokens = tokenizer.convert_ids_to_tokens(batch["input_ids"][i])
@@ -138,7 +139,8 @@ def predict_batch(data: list[dict[str, list[str]]]) -> list[list[tuple[str, str]
     model_dir = Path("../models/bert-base-german-cased-finetuned-MOPE-L3_Run_2_Epochs_29")
     tokenizer   = AutoTokenizer.from_pretrained(model_dir, use_fast=True) # use_fast=True enables the fast tokenizer implementation
     model = load_model(model_dir)
-    encoded_dataset = encode_dataset(data, tokenizer)
+    device = next(model.parameters()).device # Get device from model
+    encoded_dataset = encode_dataset(data, tokenizer, device)
     dataloader = build_dataloader(encoded_dataset, tokenizer)
     return get_predictions(dataloader, model, tokenizer)
 
