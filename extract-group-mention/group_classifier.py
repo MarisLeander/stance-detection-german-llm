@@ -152,14 +152,12 @@ def predict_batch(data: list[dict[str, list[str]]]) -> list[list[tuple[str, str]
     return get_predictions(dataloader, model, tokenizer, device)
 
 
-# if __name__ == "__main__":
-#     main()
-#%%
-# paragraphs = [{'paragraphs': 'Meine Damen und Herren, die Beantwortung der Interpellation ist erfolgt. Ich frage, ob eine Besprechung der Interpellation gewünscht wird. — Das ist nicht der Fall. Damit ist Punkt 1 der Tagesordnung erledigt. Ich rufe auf Punkt 2 der Tagesordnung:'}, {'paragraphs': 'Erste Beratung des Entwurfs eines Gesetzes zur Regelung der Besteuerung des Kleinpflanzertabaks im Erntejahr 1950 (Nr. 1508 der Drucksachen).'}, {'paragraphs': 'Dazu hat zunächst das Wort Herr Staatssekretär Hartmann.'}]
-#
-# classified_paragraphs = predict_batch(paragraphs)
-# print(classified_paragraphs)
-#%%
+if __name__ == "__main__":
+    paragraphs = [{'paragraphs': 'Das sind wieder die liberalen'}]
+    
+    classified_paragraphs = predict_batch(paragraphs)
+    print(classified_paragraphs)
+
 
 #%%
 
