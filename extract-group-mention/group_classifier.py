@@ -10,7 +10,8 @@ import torch
 from datasets import load_dataset, Dataset, DatasetDict
 from torch.utils.data import DataLoader
 import numpy as np
-#%%
+
+
 def index2label(index):
     """ Convert an index to a label.
 
@@ -31,132 +32,92 @@ def index2label(index):
     #     label2index[item] = i
     #     index2label[i] = item
 
-def load_model(model_dir):
-    """ Load a pre-trained model from the specified directory.
 
-    Args:
-        model_dir (str or Path): The directory where the model is stored.
-
-    Returns:
-        model (AutoModelForTokenClassification): The loaded model.
-    """
-    # Load the config
-    cfg   = AutoConfig.from_pretrained(model_dir)
-    # Load model and tokenizer
-    model = AutoModelForTokenClassification.from_pretrained(model_dir, config=cfg).to('cuda' if torch.cuda.is_available() else 'cpu')
-    return model
-
-def tokenize_labels(data, tokenizer):
-    """ Tokenize the input data. This is needed to prepare the input data for the model.
-
-    Args:
-        data (dict): The input data containing the paragraphs to be tokenized.
-        tokenizer (AutoTokenizer): The tokenizer to be used for tokenization.
-
-    Returns:
-        tokenized_inputs (dict): A dictionary containing the tokenized inputs.
-    """
-    tokenized_inputs = tokenizer(data["paragraphs"],
-                                  truncation=True,
-                                  padding=True,
-                                  is_split_into_words=False)
-
-    return tokenized_inputs
-
-def encode_dataset(raw_data: list[dict[str, list[str]]], tokenizer):
-    """ Encode the dataset using the tokenizer. This is needed to prepare the input data for the model.
-    Args:
-        raw_data (list[dict[str, list[str]]]): The raw data to be encoded. Each entry in the list corresponds to a paragraph from a speech.
-        tokenizer: The tokenizer to be used for encoding.
-    Returns:
-        dataset (Dataset): The encoded dataset.
-    """
-
-    # data = load_dataset('json', data_files={'input_data': path}) -> Use this to import from json
-    ds = Dataset.from_list(raw_data)
-    data = DatasetDict({"input_data": ds})
-    encoded_data = data.map(
-                tokenize_labels,              # ← function reference
-                batched=True,
-                fn_kwargs={"tokenizer": tokenizer},  # extra objects you need
-                remove_columns=["paragraphs"]# only keep the columns that are needed, i.e. input_ids, attention_mask, token_type_ids and labels. It checks if the columns are present in the corpus and removes them if they are not needed.
-            )
-    dataset = encoded_data["input_data"].with_format("torch")  # Convert to PyTorch format, to be compatible with DataLoader
-    return dataset
-
-def build_dataloader(dataset, tokenizer, batch_size=16):
-    """ Build a DataLoader for the dataset. The DataLoader will be used to load the data in batches for inference.
-    This is beneficial for large datasets, as it allows us to load the data in smaller chunks, which can be processed in parallel.
-
-    Args:
-        dataset (Dataset): The dataset to be loaded.
-        tokenizer (AutoTokenizer): The tokenizer to be used for tokenization.
-        batch_size (int, optional): The batch size to be used. Defaults to 16.
-    Returns:
-        DataLoader: The DataLoader for the dataset.
-    """
-    # Create a DataLoader for the test dataset. The DataCollatorWithPadding will pad the sequences to the one with the maximum length in the batch, so that all sequences in the batch have the same length.
-    # The dataloader will inherit batches of data, which we can then pass to the model for prediction.
-    return DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=DataCollatorWithPadding(tokenizer))
-
-
-def get_predictions(dataloader:DataLoader, model, tokenizer, device):
-    """ Get predictions from the model for the given dataloader. This function will iterate over the dataloader and get the predictions for each batch.
-    Args:
-        dataloader (DataLoader): The DataLoader containing the data to be predicted.
-        model (AutoModelForTokenClassification): The model to be used for prediction.
-        tokenizer (AutoTokenizer): The tokenizer to be used for tokenization.
-        device: The torch device ('cuda' or 'cpu')
-    Returns:
-        A list of lists containing the predicted labels for each token in each batch.
-    """
-
-    preds_all= [] # Initialize lists to store predictions
-
-    for batch in dataloader:     
-        # print("Batch size:", len(batch["input_ids"]))
-        # Explicitly move all tensor items in the batch to the model's device
-        batch_on_device = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-        with torch.inference_mode():
-            output = model(**batch_on_device) # unpacks the batch dictionary and passes the input IDs and attention mask to the model, which will return the logits, which are the unnormalized scores for each label.
-
-        logits = output.logits # Logits are the unnormalized scores for each label.
-        preds  = torch.argmax(logits, dim=-1).cpu() # take the best label for each token. We use argmax for inference since we don't need to compute the loss during inference, we just want the predicted labels. Also we won't do majority voting since (now) we only use one model.
-
-        # For tokenizer.convert_ids_to_tokens, ensure input_ids are on CPU.
-        # batch_on_device['input_ids'] is on the GPU, so move it to CPU.
-        input_ids_cpu = batch_on_device["input_ids"].cpu()
+class GroupClassifier:
+    def __init__(self, model_dir, device=None):
+        """
+        Initializes the classifier by loading the model and tokenizer once.
+        This is the slow part, and it now only runs when a TokenClassifier object is created.
+        """
+        self.model_dir = Path(model_dir)
         
-        for i in range(len(preds)):
-            labels = [index2label(int(i)) for i in preds[i]]
-            tokens = tokenizer.convert_ids_to_tokens(input_ids_cpu[i]) # Use the CPU version of input_ids
-            # preds_all.append(merge_word_pieces(zip(tokens,labels)))
-            preds_all.append(list(zip(tokens, labels)))  # Extend the list with the new predictions
-    return preds_all
-    # maybe store the predictions in a list and compare them with the ground truth labels!!!
+        if device:
+            self.device = torch.device(device)
+        else:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        print(f"Loading model from {self.model_dir} to {self.device}...")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, use_fast=True)
+        
+        # Using float16 for A100 performance
+        self.model = AutoModelForTokenClassification.from_pretrained(
+            self.model_dir,
+            torch_dtype=torch.float16 
+        ).to(self.device)
 
-def predict_batch(data: list[dict[str, list[str]]]) -> list[list[tuple[str, str]]]:
-    """ Predict the labels for a batch of paragraphs. This function will load the model, encode the dataset, build the dataloader and get the predictions.
-    Args:
-        data (list[dict[str, list[str]]]): The input data containing the paragraphs to be predicted.
-    Returns:
-        list[list[tuple[str, str]]]: A list of lists containing the predicted labels for each token in each paragraph.
-    """
+        # Optional: Compile the model for a potential speed boost on PyTorch 2.0+
+        # The first prediction will be slower due to a one-time compilation cost.
+        # self.model = torch.compile(self.model, mode="max-autotune")
+        
+        self.model.eval()
+        print("Model loaded and ready.")
 
-    model_dir = Path("../models/bert-base-german-cased-finetuned-MOPE-L3_Run_2_Epochs_29")
-    tokenizer   = AutoTokenizer.from_pretrained(model_dir, use_fast=True) # use_fast=True enables the fast tokenizer implementation
-    model = load_model(model_dir)
-    device = next(model.parameters()).device # Get device from model
-    encoded_dataset = encode_dataset(data, tokenizer)
-    dataloader = build_dataloader(encoded_dataset, tokenizer)
-    return get_predictions(dataloader, model, tokenizer, device)
+    def _prepare_data(self, data: list[dict[str, list[str]]], batch_size: int):
+        ds = Dataset.from_list(data)
+        
+        def tokenize_batch(batch):
+            return self.tokenizer(batch["paragraphs"], truncation=True, is_split_into_words=False)
 
+        encoded_data = ds.map(tokenize_batch, batched=True, remove_columns=["paragraphs"])
+        encoded_data.set_format("torch")
+        
+        return DataLoader(encoded_data, batch_size=batch_size, collate_fn=DataCollatorWithPadding(self.tokenizer))
 
-if __name__ == "__main__":
-    paragraphs = [{'paragraphs': 'Das sind wieder die liberalen'}]
-    
-    classified_paragraphs = predict_batch(paragraphs)
-    print(classified_paragraphs)
+    def predict(self, paragraphs: list[str], batch_size: int = 64):
+        """
+        Runs predictions on a list of paragraphs. This method is fast.
+        
+        Args:
+            paragraphs (list[str]): A list of sentences/paragraphs to classify.
+            batch_size (int): The number of samples to process at once. Tune for your GPU.
+        
+        Returns:
+            list[list[tuple[str, str]]]: A list where each inner list contains (token, label) pairs for a paragraph.
+        """
+        if not paragraphs:
+            return []
+            
+        data_dicts = [{"paragraphs": p} for p in paragraphs]
+        dataloader = self._prepare_data(data_dicts, batch_size)
+        
+        all_predictions = []
+        with torch.inference_mode(): # Ensures no gradients are calculated
+            with torch.autocast(device_type=self.device.type, dtype=torch.float16): # Enables mixed-precision
+                for batch in dataloader:
+                    batch_on_device = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
+                    output = self.model(**batch_on_device)
+                    
+                    logits = output.logits
+                    predictions = torch.argmax(logits, dim=-1).cpu()
+                    input_ids_cpu = batch_on_device["input_ids"].cpu()
+                    
+                    for i in range(len(predictions)):
+                        # Move the attention mask for the current item to the CPU before creating the boolean mask.
+                        attention_mask_cpu = batch_on_device["attention_mask"][i].cpu()
+                        
+                        # Now use the CPU mask to index the CPU tensors.
+                        valid_token_ids = input_ids_cpu[i][attention_mask_cpu == 1]
+                        valid_preds = predictions[i][attention_mask_cpu == 1]
+
+                        tokens = self.tokenizer.convert_ids_to_tokens(valid_token_ids, skip_special_tokens=True)
+                        labels = [index2label(p.item()) for p in valid_preds[1:-1]] # Exclude [CLS] and [SEP] predictions
+                        
+                        # Simple alignment, might need improvement for complex cases
+                        aligned_labels = labels[:len(tokens)] 
+                        
+                        all_predictions.append(list(zip(tokens, aligned_labels)))
+        
+        return all_predictions
 
 
 #%%
