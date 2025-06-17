@@ -109,7 +109,7 @@ def preprocess_speech(speech: tuple) -> tuple[int, list[dict[str, str]], Counter
     return (speech_id, paragraphs_text, stats_dict)
 
 #%%
-def create_paragraphs_classified_table(con:duckdb.DuckDBPyConnection, reset_db:bool=False):
+def create_tables(con:duckdb.DuckDBPyConnection, reset_db:bool=False):
     """
     Creates a table for classified paragraphs in the database.
 
@@ -301,8 +301,8 @@ def main():
     model_path = "stance-detection-german-llm/models/bert-base-german-cased-finetuned-MOPE-L3_Run_3_Epochs_29"
     classifier = GroupClassifier(model_dir=model_path)
     
-    # Prepare the database table.
-    create_paragraphs_classified_table(con, reset_db=True)
+    # Build the group mention and paragraph table
+    create_tables(con, reset_db=True)
     
     # Fetch all speeches from the database.
     speeches_df = extract_speeches(con)
@@ -359,21 +359,27 @@ def main():
         
         groups = extract_groups(predicted_tokens_and_labels)
         for entity, group_text in groups:
-            # Append a tuple with all the data for one row
-            records_to_insert.append(
-                (paragraph_index, speech_id, original_paragraph_text, group_text, entity)
-            )
-            
+            # Append a dictionary for easy conversion to a DataFrame
+            records_to_insert.append({
+                "paragraph_no": paragraph_index,
+                "speech_id": speech_id,
+                "paragraph": original_paragraph_text,
+                "group_text": group_text,
+                "label": entity
+            })
     # Perform a single, massive bulk insert
     if records_to_insert:
         print(f"\nStarting bulk insert of {len(records_to_insert):,} records...")
         start_time = time.time()
+
+        # Convert the list of dictionaries to a Pandas DataFrame
+        df_to_insert = pd.DataFrame(records_to_insert)
         
-        # Use executemany for a fast bulk insert
-        con.executemany("""
+        # DuckDB is highly optimized to ingest DataFrames this way.
+        con.execute("""
             INSERT INTO group_mention (paragraph_no, speech_id, paragraph, group_text, label)
-            VALUES (?, ?, ?, ?, ?);
-        """, records_to_insert)
+            SELECT paragraph_no, speech_id, paragraph, group_text, label FROM df_to_insert
+        """)
         
         end_time = time.time()
 
