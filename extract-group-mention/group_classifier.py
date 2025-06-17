@@ -62,18 +62,38 @@ class GroupClassifier:
         self.model.eval()
         print("Model loaded and ready.")
 
-    def _prepare_data(self, data: list[dict[str, list[str]]], batch_size: int):
-        ds = Dataset.from_list(data)
+    def _prepare_data(self, data: list[dict[str, list[str]]], batch_size: int, num_workers: int):
+        # Using a generator for memory efficiency with large datasets
+        def gen():
+            for p in data:
+                yield {"paragraphs": p}
+                
+        ds = Dataset.from_generator(gen)
         
         def tokenize_batch(batch):
+            # Tokenization is done on the CPU in parallel processes
             return self.tokenizer(batch["paragraphs"], truncation=True, is_split_into_words=False)
 
-        encoded_data = ds.map(tokenize_batch, batched=True, remove_columns=["paragraphs"])
+        # Uses multiple processes for the map function ---
+        encoded_data = ds.map(
+            tokenize_batch, 
+            batched=True, 
+            remove_columns=["paragraphs"],
+            num_proc=num_workers # Parallelize tokenization
+        )
         encoded_data.set_format("torch")
         
-        return DataLoader(encoded_data, batch_size=batch_size, collate_fn=DataCollatorWithPadding(self.tokenizer))
+        # Uses multiple workers and pin memory in DataLoader ---
+        return DataLoader(
+            encoded_data, 
+            batch_size=batch_size, 
+            collate_fn=DataCollatorWithPadding(self.tokenizer),
+            num_workers=num_workers,
+            pin_memory=True, # Speeds up CPU-to-GPU data transfer
+            pin_memory_device=str(self.device) if self.device.type == 'cuda' else ''
+        )
 
-    def predict(self, paragraphs: list[str], batch_size: int = 64):
+    def predict(self, paragraphs: list[str], batch_size: int = 64, num_workers: int = 32):
         """
         Runs predictions on a list of paragraphs. This method is fast.
         
@@ -88,7 +108,7 @@ class GroupClassifier:
             return []
             
         data_dicts = [{"paragraphs": p} for p in paragraphs]
-        dataloader = self._prepare_data(data_dicts, batch_size)
+        dataloader = self._prepare_data(data_dicts, batch_size, num_workers)
         
         all_predictions = []
         with torch.inference_mode(): # Ensures no gradients are calculated
