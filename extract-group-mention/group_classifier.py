@@ -1,109 +1,95 @@
-#%%
 from pathlib import Path
-
-from transformers import AutoTokenizer
-from transformers import AutoConfig
-from transformers import AutoModelForTokenClassification
-from transformers import DataCollatorWithPadding
-
+from functools import partial
 import torch
-from datasets import load_dataset, Dataset, DatasetDict
+from datasets import Dataset
 from torch.utils.data import DataLoader
-import numpy as np
+from transformers import (
+    AutoTokenizer,
+    AutoModelForTokenClassification,
+    DataCollatorWithPadding,
+)
 
+# --- WORKER FUNCTION (Top Level) ---
+def tokenize_batch_worker(batch, tokenizer):
+    """Tokenizes a batch of text and attaches word_ids."""
+    tokenized_inputs = tokenizer(batch["paragraphs"], truncation=True, is_split_into_words=False)
+    word_ids_list = [tokenized_inputs.word_ids(i) for i in range(len(tokenized_inputs["input_ids"]))]
+    tokenized_inputs["word_ids"] = word_ids_list
+    return tokenized_inputs
+
+# --- SOLUTION: Moved the collate function to the top level ---
+def custom_collate_fn_top_level(features, tokenizer):
+    """
+    Custom collate function that handles word_ids separately to prevent
+    them from being converted to tensors.
+    """
+    # Keep word_ids as a standard list of lists
+    word_ids_list = [feature.pop("word_ids") for feature in features]
+    
+    # Use the default collator for the rest of the features (input_ids, etc.)
+    batch = tokenizer.pad(
+        features,
+        padding=True,
+        return_tensors="pt",
+    )
+    
+    # Add the non-tensor word_ids list back into the final batch
+    batch["word_ids"] = word_ids_list
+    return batch
 
 def index2label(index):
-    """ Convert an index to a label.
-
-    Args:
-        index (int): The index to be converted.
-
-    Returns:
-        str: The label corresponding
-    """
-
+    """ Converts a label index back to its string representation. """
     labels = {0: '[PAD]', 1: '[UNK]', 2: 'B-EGPOL', 3: 'B-EOFINANZ', 4: 'B-EOMEDIA', 5: 'B-EOMIL', 6: 'B-EOMOV', 7: 'B-EONGO', 8: 'B-EOPOL', 9: 'B-EOREL', 10: 'B-EOSCI', 11: 'B-EOWIRT', 12: 'B-EPFINANZ', 13: 'B-EPKULT', 14: 'B-EPMEDIA', 15: 'B-EPMIL', 16: 'B-EPMOV', 17: 'B-EPNGO', 18: 'B-EPPOL', 19: 'B-EPREL', 20: 'B-EPSCI', 21: 'B-EPWIRT', 22: 'B-GPE', 23: 'B-PAGE', 24: 'B-PETH', 25: 'B-PFUNK', 26: 'B-PGEN', 27: 'B-PNAT', 28: 'B-PSOZ', 29: 'I-EGPOL', 30: 'I-EOFINANZ', 31: 'I-EOMEDIA', 32: 'I-EOMIL', 33: 'I-EOMOV', 34: 'I-EONGO', 35: 'I-EOPOL', 36: 'I-EOREL', 37: 'I-EOSCI', 38: 'I-EOWIRT', 39: 'I-EPFINANZ', 40: 'I-EPKULT', 41: 'I-EPMEDIA', 42: 'I-EPMIL', 43: 'I-EPMOV', 44: 'I-EPNGO', 45: 'I-EPPOL', 46: 'I-EPREL', 47: 'I-EPSCI', 48: 'I-EPWIRT', 49: 'I-GPE', 50: 'I-PAGE', 51: 'I-PETH', 52: 'I-PFUNK', 53: 'I-PGEN', 54: 'I-PNAT', 55: 'I-PSOZ', 56: 'O'}
-
-    return labels[index]
-    #
-    # labels = ["[PAD]", "[UNK]", "B-EGPOL", "B-EOFINANZ", "B-EOMEDIA", "B-EOMIL", "B-EOMOV", "B-EONGO", "B-EOPOL", "B-EOREL", "B-EOSCI", "B-EOWIRT", "B-EPFINANZ", "B-EPKULT", "B-EPMEDIA", "B-EPMIL", "B-EPMOV", "B-EPNGO", "B-EPPOL", "B-EPREL", "B-EPSCI", "B-EPWIRT", "B-GPE", "B-PAGE", "B-PETH", "B-PFUNK", "B-PGEN", "B-PNAT", "B-PSOZ", "I-EGPOL", "I-EOFINANZ", "I-EOMEDIA", "I-EOMIL", "I-EOMOV", "I-EONGO", "I-EOPOL", "I-EOREL", "I-EOSCI", "I-EOWIRT", "I-EPFINANZ", "I-EPKULT", "I-EPMEDIA", "I-EPMIL", "I-EPMOV", "I-EPNGO", "I-EPPOL", "I-EPREL", "I-EPSCI", "I-EPWIRT", "I-GPE", "I-PAGE", "I-PETH", "I-PFUNK", "I-PGEN", "I-PNAT", "I-PSOZ", "O"]
-    # label2index, index2label = {}, {}
-    # for i, item in enumerate(labels):
-    #     label2index[item] = i
-    #     index2label[i] = item
+    return labels.get(index, "[UNK]")
 
 
 class GroupClassifier:
     def __init__(self, model_dir, device=None):
-        """
-        Initializes the classifier by loading the model and tokenizer once.
-        This is the slow part, and it now only runs when a TokenClassifier object is created.
-        """
         self.model_dir = Path(model_dir)
+        self.device = torch.device(device or ('cuda' if torch.cuda.is_available() else 'cpu'))
         
-        if device:
-            self.device = torch.device(device)
-        else:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        base_model_name = "bert-base-german-cased"
+        print(f"Loading FAST tokenizer from base model: '{base_model_name}'")
+        self.tokenizer = AutoTokenizer.from_pretrained(base_model_name, use_fast=True)
         
-        print(f"Loading model from {self.model_dir} to {self.device}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, use_fast=True)
-        
-        # Using float16 for A100 performance
+        print(f"Loading fine-tuned model from: '{self.model_dir}'")
         self.model = AutoModelForTokenClassification.from_pretrained(
             self.model_dir,
-            torch_dtype=torch.float16 
+            torch_dtype=torch.float16
         ).to(self.device)
 
-        # Optional: Compile the model for a potential speed boost on PyTorch 2.0+
-        # The first prediction will be slower due to a one-time compilation cost.
-        # self.model = torch.compile(self.model, mode="max-autotune")
+        if torch.__version__ >= "2.0.0":
+            print("Compiling model with torch.compile()...")
+            self.model = torch.compile(self.model)
         
         self.model.eval()
         print("Model loaded and ready.")
 
-    def _prepare_data(self, data: list[dict[str, list[str]]], batch_size: int, num_workers: int):
-        # Using a generator for memory efficiency with large datasets
-        def gen():
-            for p in data:
-                yield {"paragraphs": p}
-                
-        ds = Dataset.from_generator(gen)
+    def _prepare_data(self, data: list[dict], batch_size: int, num_workers: int):
+        ds = Dataset.from_list(data)
         
-        def tokenize_batch(batch):
-            # Tokenization is done on the CPU in parallel processes
-            return self.tokenizer(batch["paragraphs"], truncation=True, is_split_into_words=False)
+        tokenize_func = partial(tokenize_batch_worker, tokenizer=self.tokenizer)
 
-        # Uses multiple processes for the map function ---
         encoded_data = ds.map(
-            tokenize_batch, 
-            batched=True, 
+            tokenize_func,
+            batched=True,
             remove_columns=["paragraphs"],
-            num_proc=num_workers # Parallelize tokenization
+            num_proc=num_workers
         )
-        encoded_data.set_format("torch")
         
-        # Uses multiple workers and pin memory in DataLoader ---
+        # --- SOLUTION: Use partial to create the collate function ---
+        collate_fn = partial(custom_collate_fn_top_level, tokenizer=self.tokenizer)
+
         return DataLoader(
-            encoded_data, 
-            batch_size=batch_size, 
-            collate_fn=DataCollatorWithPadding(self.tokenizer),
+            encoded_data,
+            batch_size=batch_size,
+            collate_fn=collate_fn, # Use the top-level collate function
             num_workers=num_workers,
-            pin_memory=True, # Speeds up CPU-to-GPU data transfer
+            pin_memory=True,
             pin_memory_device=str(self.device) if self.device.type == 'cuda' else ''
         )
 
-    def predict(self, paragraphs: list[str], batch_size: int = 64, num_workers: int = 32):
-        """
-        Runs predictions on a list of paragraphs. This method is fast.
-        
-        Args:
-            paragraphs (list[str]): A list of sentences/paragraphs to classify.
-            batch_size (int): The number of samples to process at once. Tune for your GPU.
-        
-        Returns:
-            list[list[tuple[str, str]]]: A list where each inner list contains (token, label) pairs for a paragraph.
-        """
+    def predict(self, paragraphs: list[str], batch_size: int = 64, num_workers: int = 4):
         if not paragraphs:
             return []
             
@@ -111,72 +97,39 @@ class GroupClassifier:
         dataloader = self._prepare_data(data_dicts, batch_size, num_workers)
         
         all_predictions = []
-        with torch.inference_mode(): # Ensures no gradients are calculated
-            with torch.autocast(device_type=self.device.type, dtype=torch.float16): # Enables mixed-precision
-                for batch in dataloader:
-                    batch_on_device = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
-                    output = self.model(**batch_on_device)
-                    
-                    logits = output.logits
-                    predictions = torch.argmax(logits, dim=-1).cpu()
-                    input_ids_cpu = batch_on_device["input_ids"].cpu()
-                    
-                    for i in range(len(predictions)):
-                        # Move the attention mask for the current item to the CPU before creating the boolean mask.
-                        attention_mask_cpu = batch_on_device["attention_mask"][i].cpu()
-                        
-                        # Now use the CPU mask to index the CPU tensors.
-                        valid_token_ids = input_ids_cpu[i][attention_mask_cpu == 1]
-                        valid_preds = predictions[i][attention_mask_cpu == 1]
+        with torch.inference_mode(), torch.autocast(device_type=self.device.type, dtype=torch.float16):
+            for batch in dataloader:
+                word_ids_batch = batch.pop("word_ids")
+                
+                batch_on_device = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
+                output = self.model(**batch_on_device)
+                
+                predictions = torch.argmax(output.logits, dim=-1).cpu()
 
-                        tokens = self.tokenizer.convert_ids_to_tokens(valid_token_ids, skip_special_tokens=True)
-                        labels = [index2label(p.item()) for p in valid_preds[1:-1]] # Exclude [CLS] and [SEP] predictions
+                for i in range(len(predictions)):
+                    word_ids = word_ids_batch[i]
+                    current_preds = predictions[i]
+                    current_tokens = self.tokenizer.convert_ids_to_tokens(batch["input_ids"][i])
+                    
+                    aligned_pairs = []
+                    previous_word_idx = None
+                    for token_idx, word_idx in enumerate(word_ids):
+                        if word_idx is None or word_idx == previous_word_idx:
+                            continue
                         
-                        # Simple alignment, might need improvement for complex cases
-                        aligned_labels = labels[:len(tokens)] 
+                        previous_word_idx = word_idx
+                        # Get all subword tokens for the current word
+                        subword_indices = [j for j, w_id in enumerate(word_ids) if w_id == word_idx]
                         
-                        all_predictions.append(list(zip(tokens, aligned_labels)))
+                        # Use the label from the first subword for the entire word
+                        label = index2label(current_preds[subword_indices[0]].item())
+                        
+                        # --- BUG FIX: Reconstruct the word from its tokens, not from the original string ---
+                        subword_tokens = [current_tokens[k] for k in subword_indices]
+                        full_word = self.tokenizer.convert_tokens_to_string(subword_tokens)
+
+                        aligned_pairs.append((full_word, label))
+
+                    all_predictions.append(aligned_pairs)
         
         return all_predictions
-
-
-#%%
-
-# def merge_word_pieces(paired_tokens):
-#     """
-#     paired_tokens : List[Tuple[str, str]]
-#         e.g. [("Beispiel","O"), ("##satz","O"), ...]
-#
-#     Returns
-#     -------
-#     merged : List[Tuple[str, str]]
-#         Word-level (token, label) pairs.
-#     """
-#     merged = []
-#     current_word = ""
-#     current_label = None
-#
-#     # Maybe adjust this set to tokenizer's special tokens
-#     SPECIAL = {"[CLS]", "[SEP]", "[PAD]", "[UNK]"}
-#
-#     for token, label in paired_tokens:
-#         # 1. drop specials outright
-#         if token in SPECIAL:
-#             continue
-#
-#         # 2. continuation piece?
-#         if token.startswith("##"):
-#             current_word += token[2:]        # append stem
-#             continue                         # label already set
-#         else:
-#             # 3. flush previous buffered word
-#             if current_word:
-#                 merged.append((current_word, current_label))
-#             # 4. start new word buffer
-#             current_word  = token
-#             current_label = label
-#
-#     # flush last word
-#     if current_word:
-#         merged.append((current_word, current_label))
-#     return merged

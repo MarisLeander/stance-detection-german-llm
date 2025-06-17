@@ -15,9 +15,6 @@ from datasets.utils.logging import disable_progress_bar
 disable_progress_bar()
 print("Import successful")
 #%%
-# Connect to sql database
-con = duckdb.connect(database='../data/database/german-parliament.duckdb', read_only=False)
-#%%
 def preprocess_speech(speech: tuple) -> tuple[int, list[dict[str, str]], Counter]:
     """The filtering for skipping_president_remarks is only necessare for periods >= 19 because of the "new" format provided by the bundestag. 
     For periods <19 the method just extracs all the 'p' tags
@@ -112,11 +109,12 @@ def preprocess_speech(speech: tuple) -> tuple[int, list[dict[str, str]], Counter
     return (speech_id, paragraphs_text, stats_dict)
 
 #%%
-def create_paragraphs_classified_table(reset_db:bool=False):
+def create_paragraphs_classified_table(con:duckdb.DuckDBPyConnection, reset_db:bool=False):
     """
     Creates a table for classified paragraphs in the database.
 
     Args:
+        con (duckdb.DuckDBPyConnection): Connection to our database
         reset_db (bool): If True, drops the table if it exists before creating it.
                          Defaults to False.
     Returns:
@@ -225,11 +223,12 @@ def extract_groups(paragraph:list[tuple[str,str]]) -> list[tuple[str, str]]:
 
     return groups
 
-def insert_paragraph(speech_id:int, index:int, entity:str, group_clean_text:str, paragraph:str):
+def insert_paragraph(con:duckdb.DuckDBPyConnection, speech_id:int, index:int, entity:str, group_clean_text:str, paragraph:str):
     """
     Inserts a classified paragraph into the database.
 
     Args:
+        con (duckdb.DuckDBPyConnection): Connection to our database.
         speech_id (int): The ID of the speech.
         index (int): The index of the paragraph in the speech. 0 for the first paragraph, 1 for the second, etc.
         entity (str): The entity label of the paragraph. For example, 'EOPOL' for B-EOPOL.
@@ -246,10 +245,11 @@ def insert_paragraph(speech_id:int, index:int, entity:str, group_clean_text:str,
     """, (index, speech_id, paragraph, group_clean_text, entity))
     con.commit()
 
-def insert_group_mention(speech_id:str, index:int, groups:list[tuple[str,list[tuple[str,str]]]], paragraph:str):
+def insert_group_mention(con:duckdb.DuckDBPyConnection, speech_id:str, index:int, groups:list[tuple[str,list[tuple[str,str]]]], paragraph:str):
     """Inserts classified paragraphs into the database.
 
     Args:
+        con (duckdb.DuckDBPyConnection): Connection to our database.
         speech_id (str): The ID of the speech.
         index (int): The index of the paragraph in the speech. 0 for the first paragraph, 1 for the second, etc.
         groups (list[tuple[str,list[tuple[str,str]]]]): A list of tuples containing the entity and a list of the token, label pairs for each group.
@@ -263,7 +263,7 @@ def insert_group_mention(speech_id:str, index:int, groups:list[tuple[str,list[tu
         tokens = [item[0] for item in raw_tokens]
         group_clean_text = smart_join(tokens)
         # print(f"{entity} -> {group_clean_text}")
-        insert_paragraph(speech_id, index, entity, group_clean_text, paragraph)
+        insert_paragraph(con, speech_id, index, entity, group_clean_text, paragraph)
 
 
 def process_speech(speech_id:str, paragraphs:list[dict[str, list[str]]]):
@@ -279,12 +279,12 @@ def process_speech(speech_id:str, paragraphs:list[dict[str, list[str]]]):
         groups = extract_groups(p)
         insert_group_mention(speech_id, index, groups, paragraphs[index].get('paragraphs'))
 
-def extract_speeches() -> pd.DataFrame:
+def extract_speeches(con:duckdb.DuckDBPyConnection) -> pd.DataFrame:
     #@todo speed up this query -> extract more than 1 entry at a time :)
     """Extracts a random speech from the database that has not been processed yet.
 
     Args:
-        None
+        con (duckdb.DuckDBPyConnection): Connection to our database.
 
     Returns:
         tuple: A tuple containing the speech data, including its ID, title, date, and text content.
@@ -296,7 +296,7 @@ def extract_speeches() -> pd.DataFrame:
               OR position IS NULL
               AND id NOT IN (SELECT speech_id FROM group_mention) -- check that speech wasn't already processed
         ORDER BY RANDOM()
-        LIMIT 10_000
+        LIMIT 10
         """
     return con.execute(sql).fetchdf()
 #%%
@@ -304,17 +304,21 @@ def main():
     """
     Main function to efficiently process all speeches in a batch.
     """
+    start_time = time.time()
+    # Connect to sql database
+    con = duckdb.connect(database='stance-detection-german-llm/data/database/german-parliament.duckdb', read_only=False)
+    
     print("--- Starting Batch Speech Processing ---")
     
     # Load ingthe classifier model once at the start.
-    model_path = "../models/bert-base-german-cased-finetuned-MOPE-L3_Run_3_Epochs_29"
+    model_path = "stance-detection-german-llm/models/bert-base-german-cased-finetuned-MOPE-L3_Run_3_Epochs_29"
     classifier = GroupClassifier(model_dir=model_path)
     
     # Prepare the database table.
-    create_paragraphs_classified_table(reset_db=True)
+    create_paragraphs_classified_table(con, reset_db=True)
     
     # Fetch all speeches from the database.
-    speeches_df = extract_speeches()
+    speeches_df = extract_speeches(con)
     
     all_paragraphs_text = []
     # This list will store metadata to remember where each paragraph came from.
@@ -351,7 +355,7 @@ def main():
     print(f"\nStarting batch prediction on {len(all_paragraphs_text)} paragraphs...")
     start_time = time.time()
     
-    all_predictions = classifier.predict(all_paragraphs_text, batch_size=256)
+    all_predictions = classifier.predict(all_paragraphs_text, batch_size=256, num_workers=8)
     
     end_time = time.time()
     print(f"--- Prediction finished in {end_time - start_time:.2f} seconds ---")
@@ -359,6 +363,7 @@ def main():
     # --- 4. DATABASE INSERTION ---
     # Now, we loop through the results and metadata, which are in the same order.
     print("\nExtracting groups and inserting results into the database...")
+    con.begin() # Start a transaction
     for i, metadata in enumerate(tqdm(paragraph_metadata, desc="Inserting Records")):
         speech_id, paragraph_index = metadata
         
@@ -368,17 +373,22 @@ def main():
         
         # Use your existing functions to process the results
         groups = extract_groups(predicted_tokens_and_labels)
-        insert_group_mention(speech_id, paragraph_index, groups, original_paragraph_text)
-        
+        insert_group_mention(con, speech_id, paragraph_index, groups, original_paragraph_text)
+    con.commit()
     print("\n--- Processing complete! ---")
     
     # 3. The final result is a Counter object (which works just like a dict)
     print(f"\nAfter loop: {overall_statistics}")
     print(f"Overall extracted paragraphs: {overall_statistics.total()}")
+    print(f"LLM setup took {elapsed_time} min.")
+    con.close()
 
 if __name__ == "__main__":
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+        print("Multiprocessing start method set to 'spawn'.")
+    except RuntimeError:
+        # This can happen if the context is already set, which is fine.
+        pass
     main()
-    # con.close()
-#%%
-con.close()
-#%%
+
