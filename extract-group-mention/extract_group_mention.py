@@ -175,51 +175,38 @@ def extract_groups(paragraph:list[tuple[str,str]]) -> list[tuple[str, str]]:
     Returns:
         list[tuple[str, str]]: A list of tuples where each tuple contains the entity label and a list of (token, label) pairs for that entity, which contain the full mention.
     """
-    # This is a set of special tokens that should be ignored in the grouping process. -> adjust it if necessary
-    SPECIAL = {"[CLS]", "[SEP]", "[PAD]", "[UNK]"}
-    # empty list for groups of paragraph
     groups = []
-    # This is a temporary list to hold the current group mention
-    group_tmp = []
-    # This is a flag to indicate if we are currently inside a group mention
-    group_started = False
-    entity = "" # This hold the current entity. e.g. EOPOL for B-EOPOL
-    for token, label in paragraph:
-        # If token is a special token like [CLS] skip it
-        if token in SPECIAL:
-            continue
-        # Check for begin of group
-        elif label.startswith("B-"):
-            group_started = True
-            entity = label[2:]
-            if group_tmp:
-                groups.append((entity, group_tmp))
-                group_tmp = [] # New Group will begin
-            # Append new beginning label
-            group_tmp.append((token, label))
-        # It is checked that 1) we have an inside label and 2) There was a B- label before!
-        elif label.startswith("I-") and group_started:
-            # Then we check if the entity matches
-            if label[2:] != entity:
-                # print(f"Current label: {label[2:]} doesn't match beginning label: {entity}") @todo handle this as error log
-                # Break current group because of the miss-label
-                group_started = False
-            else:
-            # If all tests hold, we append the token and its label to the current group
-                group_tmp.append((token, label))
-        elif label == 'O':
-            # An 'O' Tag is always outside. Thus if we scan one, it means that the current group is over
-            if group_tmp:
-                groups.append((entity, group_tmp))
-                group_tmp = [] # New Group will begin
-            group_started = False
-        else:
-            pass
-            # print(f"Filtered faulty classification: ({token}, {label})") @todo handle this as error log
+    current_group_tokens = []
+    current_entity = ""
 
-    # Flush last word
-    if group_tmp:
-        groups.append((entity, group_tmp))
+    for token, label in paragraph:
+        # Check if a new group starts
+        if label.startswith("B-"):
+            # If there's a pending group, save it first
+            if current_group_tokens:
+                clean_text = smart_join(current_group_tokens)
+                groups.append((current_entity, clean_text))
+            
+            # Start the new group
+            current_entity = label[2:]
+            current_group_tokens = [token]
+        # Check if the current token continues the existing group
+        elif label.startswith("I-") and label[2:] == current_entity:
+            current_group_tokens.append(token)
+        # If the token is 'O' or an invalid 'I-' tag, the group ends
+        else:
+            if current_group_tokens:
+                clean_text = smart_join(current_group_tokens)
+                groups.append((current_entity, clean_text))
+            
+            # Reset for the next potential group
+            current_group_tokens = []
+            current_entity = ""
+            
+    # After the loop, save any pending group
+    if current_group_tokens:
+        clean_text = smart_join(current_group_tokens)
+        groups.append((current_entity, clean_text))
 
     return groups
 
@@ -294,9 +281,9 @@ def extract_speeches(con:duckdb.DuckDBPyConnection) -> pd.DataFrame:
         FROM speech
         WHERE position NOT IN ('Präsidentin', 'Vizepräsidentin', 'Vizepräsident', 'Präsident')
               OR position IS NULL
-              AND id NOT IN (SELECT speech_id FROM group_mention) -- check that speech wasn't already processed
+              AND id NOT IN (SELECT distinct(speech_id) FROM group_mention) -- check that speech wasn't already processed
         ORDER BY RANDOM()
-        LIMIT 10
+        LIMIT 100_000
         """
     return con.execute(sql).fetchdf()
 #%%
@@ -304,7 +291,7 @@ def main():
     """
     Main function to efficiently process all speeches in a batch.
     """
-    start_time = time.time()
+    total_start_time = time.time()
     # Connect to sql database
     con = duckdb.connect(database='stance-detection-german-llm/data/database/german-parliament.duckdb', read_only=False)
     
@@ -349,38 +336,57 @@ def main():
         print("No paragraphs to process. Exiting.")
         return
 
-    # --- 3. EFFICIENT BATCHED INFERENCE ---
-    # This is the magic step. Process all paragraphs in one go on the GPU.
+    # Efficient batched inference
+    # Processes all paragraphs in one go on the GPU.
     # Use a large batch size to maximize A100 utilization.
     print(f"\nStarting batch prediction on {len(all_paragraphs_text)} paragraphs...")
     start_time = time.time()
     
-    all_predictions = classifier.predict(all_paragraphs_text, batch_size=256, num_workers=8)
+    all_predictions = classifier.predict(all_paragraphs_text, batch_size=256, num_workers=12)
     
     end_time = time.time()
     print(f"--- Prediction finished in {end_time - start_time:.2f} seconds ---")
 
-    # --- 4. DATABASE INSERTION ---
-    # Now, we loop through the results and metadata, which are in the same order.
-    print("\nExtracting groups and inserting results into the database...")
-    con.begin() # Start a transaction
-    for i, metadata in enumerate(tqdm(paragraph_metadata, desc="Inserting Records")):
+    #@todo do this in a method maybe
+    # Collect all records before inserting
+    print("\nExtracting groups and preparing for bulk insert...")
+    records_to_insert = []
+    #@ todo perform smart join!
+    for i, metadata in enumerate(tqdm(paragraph_metadata, desc="Preparing Records")):
         speech_id, paragraph_index = metadata
-        
-        # Get the corresponding prediction and original text
         predicted_tokens_and_labels = all_predictions[i]
         original_paragraph_text = all_paragraphs_text[i]
         
-        # Use your existing functions to process the results
         groups = extract_groups(predicted_tokens_and_labels)
-        insert_group_mention(con, speech_id, paragraph_index, groups, original_paragraph_text)
-    con.commit()
+        for entity, group_text in groups:
+            # Append a tuple with all the data for one row
+            records_to_insert.append(
+                (paragraph_index, speech_id, original_paragraph_text, group_text, entity)
+            )
+            
+    # Perform a single, massive bulk insert
+    if records_to_insert:
+        print(f"\nStarting bulk insert of {len(records_to_insert):,} records...")
+        start_time = time.time()
+        
+        # Use executemany for a fast bulk insert
+        con.executemany("""
+            INSERT INTO group_mention (paragraph_no, speech_id, paragraph, group_text, label)
+            VALUES (?, ?, ?, ?, ?);
+        """, records_to_insert)
+        
+        end_time = time.time()
+
+        
+    else:
+        print("\nNo group mentions found to insert.")
     print("\n--- Processing complete! ---")
     
     # 3. The final result is a Counter object (which works just like a dict)
     print(f"\nAfter loop: {overall_statistics}")
     print(f"Overall extracted paragraphs: {overall_statistics.total()}")
-    print(f"LLM setup took {elapsed_time} min.")
+    elapsed_time = (time.time() - total_start_time) / 60
+    print(f"Processing Speeches took {round(elapsed_time,2)} min.")
     con.close()
 
 if __name__ == "__main__":
