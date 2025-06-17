@@ -342,7 +342,7 @@ def main():
     print(f"\nStarting batch prediction on {len(all_paragraphs_text)} paragraphs...")
     start_time = time.time()
     
-    all_predictions = classifier.predict(all_paragraphs_text, batch_size=256, num_workers=12)
+    all_predictions = classifier.predict(all_paragraphs_text, batch_size=256, num_workers=8)
     
     end_time = time.time()
     print(f"--- Prediction finished in {end_time - start_time:.2f} seconds ---")
