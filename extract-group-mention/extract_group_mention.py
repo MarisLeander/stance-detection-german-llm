@@ -2,6 +2,8 @@
 # Since the imports take quite some time we Signal if they are done
 print("Starting imports")
 from collections import Counter
+import argparse 
+from datetime import datetime
 import duckdb
 import xml.etree.ElementTree as ET
 import pandas as pd
@@ -15,6 +17,51 @@ from datasets.utils.logging import disable_progress_bar
 disable_progress_bar()
 print("Import successful")
 #%%
+
+def log_statistics( overall_stats: Counter, elapsed_minutes: float, processed_speeches: int, log_file: str = "statistics.txt"):
+    """
+    Formats the final statistics, prints them to the console,
+    and appends them to a log file.
+
+    Args:
+        overall_stats (Counter): The counter object with processing statistics.
+        elapsed_minutes (float): The total runtime in minutes.
+        processed_speeches (int): The number of speeches processed (from the --limit arg).
+        log_file (str): The path to the log file.
+    """
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    
+    # Create a header for the log entry
+    header = f"--- Statistics for run on {timestamp} ---\n"
+    
+    # Format each key-value pair from the Counter for readability
+    stats_lines = [f"  - {key:<35}: {value:,}" for key, value in overall_stats.items()]
+    formatted_stats = "\n".join(stats_lines)
+    
+    # Format the summary lines. <35 means left alignment with a reserved width of 35 chars (padding)
+    summary = (
+        f"\n  ----------------------------------------\n"
+        f"  - {'Overall extracted paragraphs':<35}: {overall_stats.total():,}\n"
+        f"  - {'Total Speeches Processed':<35}: {processed_speeches:,}\n"
+        f"  - {'Execution Time (minutes)':<35}: {round(elapsed_minutes, 2)}"
+    )
+    
+    output_string = header + formatted_stats + summary + "\n\n"
+
+    print("\n" + output_string)
+
+    # Append the formatted string to the log file
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(output_string)
+        print(f"Statistics successfully appended to {log_file}")
+    except IOError as e:
+        print(f"Error: Could not write to log file {log_file}. Reason: {e}")
+
+
+
 def preprocess_speech(speech: tuple) -> tuple[int, list[dict[str, str]], Counter]:
     """The filtering for skipping_president_remarks is only necessare for periods >= 19 because of the "new" format provided by the bundestag. 
     For periods <19 the method just extracs all the 'p' tags
@@ -266,7 +313,7 @@ def process_speech(speech_id:str, paragraphs:list[dict[str, list[str]]]):
         groups = extract_groups(p)
         insert_group_mention(speech_id, index, groups, paragraphs[index].get('paragraphs'))
 
-def extract_speeches(con:duckdb.DuckDBPyConnection) -> pd.DataFrame:
+def extract_speeches(con:duckdb.DuckDBPyConnection, limit:int = 1000) -> pd.DataFrame:
     #@todo speed up this query -> extract more than 1 entry at a time :)
     """Extracts a random speech from the database that has not been processed yet.
 
@@ -283,14 +330,45 @@ def extract_speeches(con:duckdb.DuckDBPyConnection) -> pd.DataFrame:
               OR position IS NULL
               AND id NOT IN (SELECT distinct(speech_id) FROM group_mention) -- check that speech wasn't already processed
         ORDER BY RANDOM()
-        LIMIT 100_000
+        LIMIT ?
         """
-    return con.execute(sql).fetchdf()
+    return con.execute(sql, (limit,)).fetchdf()
 #%%
 def main():
     """
     Main function to efficiently process all speeches in a batch.
     """
+
+    parser = argparse.ArgumentParser(description="Process speeches to find group mentions.")
+    
+    # Add an argument for the limit.
+    # We define its name (--limit), type (int), a default value, and a help message.
+    parser.add_argument(
+        "--limit", 
+        type=int, 
+        default=1000, 
+        help="The maximum number of speeches to process."
+    )
+
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="The amount of workers (threads) to extract group mention"
+    )
+
+    parser.add_argument(
+        "--reset_db",
+        type=bool,
+        default=False,
+        help="Decised whether the group_mention table should get reset, or not"
+    )
+
+    # Parse the arguments passed from the command line
+    args = parser.parse_args()
+
+
+    
     total_start_time = time.time()
     # Connect to sql database
     con = duckdb.connect(database='stance-detection-german-llm/data/database/german-parliament.duckdb', read_only=False)
@@ -302,10 +380,10 @@ def main():
     classifier = GroupClassifier(model_dir=model_path)
     
     # Build the group mention and paragraph table
-    create_tables(con, reset_db=True)
+    create_tables(con, reset_db=args.reset_db)
     
     # Fetch all speeches from the database.
-    speeches_df = extract_speeches(con)
+    speeches_df = extract_speeches(con, limit=args.limit)
     
     all_paragraphs_text = []
     # This list will store metadata to remember where each paragraph came from.
@@ -342,7 +420,7 @@ def main():
     print(f"\nStarting batch prediction on {len(all_paragraphs_text)} paragraphs...")
     start_time = time.time()
     
-    all_predictions = classifier.predict(all_paragraphs_text, batch_size=256, num_workers=8)
+    all_predictions = classifier.predict(all_paragraphs_text, batch_size=256, num_workers=args.workers)
     
     end_time = time.time()
     print(f"--- Prediction finished in {end_time - start_time:.2f} seconds ---")
@@ -386,13 +464,18 @@ def main():
         
     else:
         print("\nNo group mentions found to insert.")
+        
     print("\n--- Processing complete! ---")
     
-    # 3. The final result is a Counter object (which works just like a dict)
-    print(f"\nAfter loop: {overall_statistics}")
-    print(f"Overall extracted paragraphs: {overall_statistics.total()}")
-    elapsed_time = (time.time() - total_start_time) / 60
-    print(f"Processing Speeches took {round(elapsed_time,2)} min.")
+    # Calculate final elapsed time
+    elapsed_time_minutes = (time.time() - total_start_time) / 60
+    
+    # Call the new function to print and log the final stats
+    log_statistics(
+        overall_stats=overall_statistics,
+        elapsed_minutes=elapsed_time_minutes,
+        processed_speeches=args.limit 
+    )
     con.close()
 
 if __name__ == "__main__":
