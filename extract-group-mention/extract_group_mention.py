@@ -1,6 +1,10 @@
-#%%
+# ------
+# Disables progress bar of .map function
+from datasets.utils.logging import disable_progress_bar
+disable_progress_bar()
+# -------
 # Since the imports take quite some time we Signal if they are done
-print("Starting imports")
+print("Starting Worker")
 from collections import Counter
 import argparse 
 from datetime import datetime
@@ -12,10 +16,7 @@ import multiprocessing
 from tqdm import tqdm
 # Import classifier
 from group_classifier import GroupClassifier
-from datasets.utils.logging import disable_progress_bar
-# Disables progress bar of .map function
-disable_progress_bar()
-print("Import successful")
+print("Worker is setup")
 #%%
 
 def log_statistics( overall_stats: Counter, elapsed_minutes: float, processed_speeches: int, log_file: str = "statistics.txt"):
@@ -179,13 +180,15 @@ def create_tables(con:duckdb.DuckDBPyConnection, reset_db:bool=False):
             id INTEGER DEFAULT nextval('group_mention_id_seq') PRIMARY KEY,
             paragraph_no INTEGER, -- If its 0, its the first paragraph of the speech, 1 for the second, etc.
             speech_id VARCHAR NOT NULL REFERENCES speech(id),
-            paragraph VARCHAR NOT NULL,
             group_text VARCHAR NOT NULL, -- This is the group mention, e.g. die Mitglieder der SPD-Fraktion
             label VARCHAR(15) NOT NULL,
+            paragraph VARCHAR NOT NULL,
+            annotation_paragraph VARCHAR NOT NULL, 
+            inference_paragraph VARCHAR NOT NULL
         )
     """)
     con.commit()
-#%%
+    
 def smart_join(tokens):
     """
     Joins a list of word tokens into a single string, handling punctuation
@@ -200,8 +203,11 @@ def smart_join(tokens):
     result = []
     # Define punctuation that should not have a preceding space
     no_space_before = {',', '.', '?', '!', ';', ':', ')'}
+    special_tokens_to_exclude = {"[UNK]","[PAD]","[CLS]"} # Set of tokens to ignore
 
     for i, token in enumerate(tokens):
+        if token in special_tokens_to_exclude:
+            continue
         # If it's the very first token, a punctuation mark, or a sub-word,
         # don't add a leading space.
         if i > 0 and token not in no_space_before and not token.startswith('##'):
@@ -212,7 +218,43 @@ def smart_join(tokens):
 
     return "".join(result).replace(' - ', '-') # Removes the space before and after a hyphen (Bindestrich)
 
-def extract_groups(paragraph:list[tuple[str,str]]) -> list[tuple[str, str]]:
+def format_text(before_text:str, mention_text:str, after_text:str) -> tuple[str,str]:
+    """
+    Creates a styled HTML paragraph and highlights the exact group mention
+    specified by its start and end indices.
+
+    This version uses precise string slicing instead of regular expressions to ensure
+    only the specific occurrence is highlighted.
+
+    Args:
+        before_text (str): The content of the paragraph in front of the group mention
+        mention_text (str): The exact text of the group mention.
+        after_text (str): The content of the paragraph after the group mention
+    Returns:
+        tuple: A tuple, containing an HTML string for the annotaters, aswell as a lowkey tagged string, for LLM inference
+    """
+
+     # Style for the highlight span itself
+    highlight_style = "background-color: #FFF79F; border-bottom: 2px solid #FFD700; padding-bottom: 1px; border-radius: 5px;"
+    
+    # Base style for the entire paragraph container
+    paragraph_style = "font-family: 'Inter', sans-serif; font-size: 16px; line-height: 1.7; color: #333;"
+
+    # Construction of the highlighted HTML
+    # Wrap the sliced mention text with the highlight style
+    highlighted_mention_html = f' <span style="{highlight_style}">{mention_text}</span> '
+    
+    # Re-assemble the paragraph and wrap it in a styled div
+    final_content = f"{before_text}{highlighted_mention_html}{after_text}"
+    final_styled_annotator_paragraph = f'<div style="{paragraph_style}">{final_content}</div>'
+    final_styled_inference_paragraph = f"{before_text} <span>{mention_text}</span> {after_text}"
+
+    return (" ".join(final_styled_annotator_paragraph.split()), " ".join(final_styled_inference_paragraph.split())) # We get rid of duplicate whitespaces / tabs / returns
+
+
+    
+
+def extract_groups(paragraph:list[tuple[str,str]]) -> list[tuple[str, str, str, str]]:
     """ Extracts group mention along with their labels from a paragraph. It groups tokens by their entity labels to get the full mention.
     If a mention is broken e.g it does not start with a 'B-' label, it will be filtered.
 
@@ -220,23 +262,35 @@ def extract_groups(paragraph:list[tuple[str,str]]) -> list[tuple[str, str]]:
         paragraph (list[tuple[str,str]]): A list of tuples containing tokens and their corresponding labels.
 
     Returns:
-        list[tuple[str, str]]: A list of tuples where each tuple contains the entity label and a list of (token, label) pairs for that entity, which contain the full mention.
+        list[tuple[str, str, str, str]]: A list of tuples where each tuple contains the entity label and a list of (token, label) pairs for that entity, as well
+                                         as styled paragraphs for further annotation and inference (annotation_paragraph, inference_paragraph)
     """
     groups = []
     current_group_tokens = []
     current_entity = ""
+    # Get the text in front of the group mention.
+    text_before_mention = ""
 
-    for token, label in paragraph:
+    for index, (token, label) in enumerate(paragraph):
         # Check if a new group starts
         if label.startswith("B-"):
             # If there's a pending group, save it first
             if current_group_tokens:
                 clean_text = smart_join(current_group_tokens)
-                groups.append((current_entity, clean_text))
+                # Get the current token, and the sucessing tokens
+                following_tokens = [t[0] for t in paragraph[index:]]
+                # Convert tokens into string
+                text_after_mention = smart_join(following_tokens)
+                annotation_paragraph, inference_paragraph = format_text(text_before_mention, clean_text, text_after_mention)
+                groups.append((current_entity, clean_text, annotation_paragraph, inference_paragraph))
             
             # Start the new group
             current_entity = label[2:]
             current_group_tokens = [token]
+            # Get the tokens before the group mention
+            previous_tokens = [t[0] for t in paragraph[:index]]
+            # Convert tokens into string
+            text_before_mention = smart_join(previous_tokens)
         # Check if the current token continues the existing group
         elif label.startswith("I-") and label[2:] == current_entity:
             current_group_tokens.append(token)
@@ -244,7 +298,12 @@ def extract_groups(paragraph:list[tuple[str,str]]) -> list[tuple[str, str]]:
         else:
             if current_group_tokens:
                 clean_text = smart_join(current_group_tokens)
-                groups.append((current_entity, clean_text))
+                # Get the current token, and the sucessing tokens
+                following_tokens = [t[0] for t in paragraph[index:]]
+                # Convert tokens into string
+                text_after_mention = smart_join(following_tokens)
+                annotation_paragraph, inference_paragraph = format_text(text_before_mention, clean_text, text_after_mention)
+                groups.append((current_entity, clean_text, annotation_paragraph, inference_paragraph))
             
             # Reset for the next potential group
             current_group_tokens = []
@@ -253,65 +312,15 @@ def extract_groups(paragraph:list[tuple[str,str]]) -> list[tuple[str, str]]:
     # After the loop, save any pending group
     if current_group_tokens:
         clean_text = smart_join(current_group_tokens)
-        groups.append((current_entity, clean_text))
+        # Get the current token, and the sucessing tokens
+        following_tokens = [t[0] for t in paragraph[index:]]
+        # Convert tokens into string
+        text_after_mention = smart_join(following_tokens)
+        annotation_paragraph, inference_paragraph = format_text(text_before_mention, clean_text, text_after_mention)
+        groups.append((current_entity, clean_text, annotation_paragraph, inference_paragraph))
 
     return groups
 
-def insert_paragraph(con:duckdb.DuckDBPyConnection, speech_id:int, index:int, entity:str, group_clean_text:str, paragraph:str):
-    """
-    Inserts a classified paragraph into the database.
-
-    Args:
-        con (duckdb.DuckDBPyConnection): Connection to our database.
-        speech_id (int): The ID of the speech.
-        index (int): The index of the paragraph in the speech. 0 for the first paragraph, 1 for the second, etc.
-        entity (str): The entity label of the paragraph. For example, 'EOPOL' for B-EOPOL.
-        group_clean_text (str): The cleaned text of the paragraph.
-        paragraph (str): The original paragraph text.
-
-    Returns:
-        None
-    """
-    con.execute("""
-        INSERT INTO group_mention (paragraph_no, speech_id, paragraph, group_text, label)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT DO NOTHING; -- If the paragraph already exists, do nothing
-    """, (index, speech_id, paragraph, group_clean_text, entity))
-    con.commit()
-
-def insert_group_mention(con:duckdb.DuckDBPyConnection, speech_id:str, index:int, groups:list[tuple[str,list[tuple[str,str]]]], paragraph:str):
-    """Inserts classified paragraphs into the database.
-
-    Args:
-        con (duckdb.DuckDBPyConnection): Connection to our database.
-        speech_id (str): The ID of the speech.
-        index (int): The index of the paragraph in the speech. 0 for the first paragraph, 1 for the second, etc.
-        groups (list[tuple[str,list[tuple[str,str]]]]): A list of tuples containing the entity and a list of the token, label pairs for each group.
-        paragraph (str): The original paragraph text.
-
-    Returns:
-        None
-    """
-    for group in groups:
-        entity, raw_tokens = group
-        tokens = [item[0] for item in raw_tokens]
-        group_clean_text = smart_join(tokens)
-        # print(f"{entity} -> {group_clean_text}")
-        insert_paragraph(con, speech_id, index, entity, group_clean_text, paragraph)
-
-
-def process_speech(speech_id:str, paragraphs:list[dict[str, list[str]]]):
-    """Processes a speech by classifying its paragraphs (extracting group mention) and inserting them into the database.
-
-    Args:
-        speech_id (str): The ID of the speech.
-        paragraphs (list[dict[str, list[str]]]): The list of paragraphs, each represented as a dictionary with a 'paragraphs' key containing the text.
-    """
-    group_mention = predict_batch(paragraphs)
-    for index, p in enumerate(group_mention):
-        # print(p)
-        groups = extract_groups(p)
-        insert_group_mention(speech_id, index, groups, paragraphs[index].get('paragraphs'))
 
 def extract_speeches(con:duckdb.DuckDBPyConnection, limit:int = 1000) -> pd.DataFrame:
     #@todo speed up this query -> extract more than 1 entry at a time :)
@@ -433,17 +442,21 @@ def main():
     for i, metadata in enumerate(tqdm(paragraph_metadata, desc="Preparing Records")):
         speech_id, paragraph_index = metadata
         predicted_tokens_and_labels = all_predictions[i]
-        original_paragraph_text = all_paragraphs_text[i]
+        # original_paragraph_text = all_paragraphs_text[i]
         
         groups = extract_groups(predicted_tokens_and_labels)
-        for entity, group_text in groups:
+        tokens = [item[0] for item in predicted_tokens_and_labels]
+        group_joined_text = smart_join(tokens)
+        for entity, group_text, annotation_paragraph, inference_paragraph in groups:
             # Append a dictionary for easy conversion to a DataFrame
             records_to_insert.append({
                 "paragraph_no": paragraph_index,
                 "speech_id": speech_id,
-                "paragraph": original_paragraph_text,
                 "group_text": group_text,
-                "label": entity
+                "label": entity,
+                "paragraph": group_joined_text,
+                "annotation_paragraph": annotation_paragraph,
+                "inference_paragraph": inference_paragraph,
             })
     # Perform a single, massive bulk insert
     if records_to_insert:
@@ -455,8 +468,8 @@ def main():
         
         # DuckDB is highly optimized to ingest DataFrames this way.
         con.execute("""
-            INSERT INTO group_mention (paragraph_no, speech_id, paragraph, group_text, label)
-            SELECT paragraph_no, speech_id, paragraph, group_text, label FROM df_to_insert
+            INSERT INTO group_mention (paragraph_no, speech_id, group_text, label, paragraph, annotation_paragraph, inference_paragraph)
+            SELECT paragraph_no, speech_id, group_text, label, paragraph, annotation_paragraph, inference_paragraph FROM df_to_insert
         """)
         
         end_time = time.time()

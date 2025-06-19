@@ -77,7 +77,7 @@ class GroupClassifier:
             num_proc=num_workers
         )
         
-        # --- SOLUTION: Use partial to create the collate function ---
+        # Use partial to create the collate function
         collate_fn = partial(custom_collate_fn_top_level, tokenizer=self.tokenizer)
 
         return DataLoader(
