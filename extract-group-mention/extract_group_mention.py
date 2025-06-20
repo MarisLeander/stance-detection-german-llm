@@ -235,7 +235,7 @@ def format_text(before_text:str, mention_text:str, after_text:str) -> tuple[str,
     """
 
     # Style for the highlight span itself
-    highlight_style = "background-color: #FFF79F; border-bottom: 2px solid #FFD700; padding-bottom: 1px;"
+    highlight_style = "background-color: #FFFDE7; border-radius: 4px; padding: 1px 5px; box-shadow: inset 0 -2px 0 #FFD600;"
     
     # Base style for the entire paragraph container
     paragraph_style = "font-family: 'Inter', sans-serif; font-size: 16px; line-height: 1.7; color: #333;"
