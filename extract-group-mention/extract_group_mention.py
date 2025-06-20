@@ -7,7 +7,9 @@ disable_progress_bar()
 print("Starting Worker")
 from collections import Counter
 import argparse 
+import json
 from datetime import datetime
+from pathlib import Path
 import duckdb
 import xml.etree.ElementTree as ET
 import pandas as pd
@@ -19,29 +21,23 @@ from group_classifier import GroupClassifier
 print("Worker is setup")
 #%%
 
-def log_statistics( overall_stats: Counter, elapsed_minutes: float, processed_speeches: int, log_file: str = "statistics.txt"):
+def log_statistics(overall_stats: Counter, elapsed_minutes: float, processed_speeches: int, reset_db: bool = False, log_file: str = "statistics.json"):
     """
-    Formats the final statistics, prints them to the console,
-    and appends them to a log file.
+    Formats statistics, prints them to the console, and saves them to a JSON file.
 
     Args:
         overall_stats (Counter): The counter object with processing statistics.
         elapsed_minutes (float): The total runtime in minutes.
-        processed_speeches (int): The number of speeches processed (from the --limit arg).
-        log_file (str): The path to the log file.
+        processed_speeches (int): The number of speeches processed.
+        reset_db (bool): If True, the JSON log file will be overwritten.
+                         Otherwise, the new entry is appended.
+        log_file (str): The path to the JSON log file.
     """
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    
-    # Create a header for the log entry
-    header = f"--- Statistics for run on {timestamp} ---\n"
-    
-    # Format each key-value pair from the Counter for readability
+    # --- 1. Format and Print Human-Readable Output ---
+    timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    header = f"--- Statistics for run on {timestamp_str} ---\n"
     stats_lines = [f"  - {key:<35}: {value:,}" for key, value in overall_stats.items()]
     formatted_stats = "\n".join(stats_lines)
-    
-    # Format the summary lines. <35 means left alignment with a reserved width of 35 chars (padding)
     summary = (
         f"\n  ----------------------------------------\n"
         f"  - {'Overall extracted paragraphs':<35}: {overall_stats.total():,}\n"
@@ -49,17 +45,49 @@ def log_statistics( overall_stats: Counter, elapsed_minutes: float, processed_sp
         f"  - {'Execution Time (minutes)':<35}: {round(elapsed_minutes, 2)}"
     )
     
-    output_string = header + formatted_stats + summary + "\n\n"
+    console_output = "\n" + header + formatted_stats + summary
+    print(console_output)
 
-    print("\n" + output_string)
-
-    # Append the formatted string to the log file
+    # --- 2. Prepare Machine-Readable JSON Output ---
+    new_log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "runtime_minutes": round(elapsed_minutes, 2),
+        "speeches_processed": processed_speeches,
+        "num_of_total_paragraphs": overall_stats.total(),
+        "detailed_counts": dict(overall_stats)
+    }
+    
+    file_path = Path.home() / "stance-detection-german-llm" / "data" / "annotation_data" / log_file
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # --- 3. Save to JSON file (with overwrite/append logic) ---
     try:
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(output_string)
-        print(f"Statistics successfully appended to {log_file}")
+        all_entries = []
+        # If reset_db is False (i.e., we want to append), read existing data first.
+        if not reset_db:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    all_entries = json.load(f)
+                # Ensure it's a list, in case the file is corrupted
+                if not isinstance(all_entries, list):
+                    all_entries = []
+            except (FileNotFoundError, json.JSONDecodeError):
+                # If file doesn't exist or is empty, we'll start a new list anyway
+                pass
+        
+        # If reset_db is True, `all_entries` is still an empty list.
+        # Now, add the new entry to the list (which is either empty or full of old entries).
+        all_entries.append(new_log_entry)
+        
+        # Write the entire list back to the file, which naturally overwrites it.
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(all_entries, f, indent=4, ensure_ascii=False)
+            
+        action = "overwritten" if reset_db else "appended to"
+        print(f"\nStatistics successfully saved to {file_path} (file has been {action}).")
+        
     except IOError as e:
-        print(f"Error: Could not write to log file {log_file}. Reason: {e}")
+        print(f"Error: Could not write to log file {file_path}. Reason: {e}")
 
 
 
@@ -339,7 +367,7 @@ def extract_speeches(con:duckdb.DuckDBPyConnection, limit:int = 1000) -> pd.Data
               OR position IS NULL
               AND id NOT IN (SELECT distinct(speech_id) FROM group_mention) -- check that speech wasn't already processed
         ORDER BY RANDOM()
-        LIMIT ?
+        LIMIT ? 
         """
     return con.execute(sql, (limit,)).fetchdf()
 #%%
@@ -368,13 +396,14 @@ def main():
 
     parser.add_argument(
         "--reset_db",
-        type=bool,
-        default=False,
-        help="Decised whether the group_mention table should get reset, or not"
+        action='store_true', # This is the key change
+        help="If this flag is present, the group_mention table will be reset."
     )
 
     # Parse the arguments passed from the command line
     args = parser.parse_args()
+    
+    print(args)
 
 
     
@@ -482,12 +511,14 @@ def main():
     
     # Calculate final elapsed time
     elapsed_time_minutes = (time.time() - total_start_time) / 60
+
     
     # Call the new function to print and log the final stats
     log_statistics(
         overall_stats=overall_statistics,
         elapsed_minutes=elapsed_time_minutes,
-        processed_speeches=args.limit 
+        processed_speeches=args.limit,
+        reset_db=args.reset_db
     )
     con.close()
 
