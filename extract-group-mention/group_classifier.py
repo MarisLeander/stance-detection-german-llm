@@ -9,7 +9,7 @@ from transformers import (
     DataCollatorWithPadding,
 )
 
-# --- WORKER FUNCTION (Top Level) ---
+# --- WORKER FUNCTION ---
 def tokenize_batch_worker(batch, tokenizer):
     """Tokenizes a batch of text and attaches word_ids."""
     tokenized_inputs = tokenizer(batch["paragraphs"], truncation=True, is_split_into_words=False)
@@ -17,7 +17,6 @@ def tokenize_batch_worker(batch, tokenizer):
     tokenized_inputs["word_ids"] = word_ids_list
     return tokenized_inputs
 
-# --- SOLUTION: Moved the collate function to the top level ---
 def custom_collate_fn_top_level(features, tokenizer):
     """
     Custom collate function that handles word_ids separately to prevent
@@ -124,7 +123,7 @@ class GroupClassifier:
                         # Use the label from the first subword for the entire word
                         label = index2label(current_preds[subword_indices[0]].item())
                         
-                        # --- BUG FIX: Reconstruct the word from its tokens, not from the original string ---
+                        # Reconstruct the word from its tokens, not from the original string
                         subword_tokens = [current_tokens[k] for k in subword_indices]
                         full_word = self.tokenizer.convert_tokens_to_string(subword_tokens)
 
