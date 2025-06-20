@@ -5,8 +5,23 @@ import pandas as pd
 import csv 
 from datetime import datetime
 #%%
- # Connect to sql database
-con = db.connect(database='../data/database/german-parliament.duckdb', read_only=False)
+
+def connect_db() -> db.DuckDBPyConnection:
+    """ Connect to the database
+
+    Args:
+        None
+        
+    Returns:
+         duckdb.DuckDBPyConnection: Connection to our database.
+
+    """
+    # Get path to db
+    home_dir = Path.home()
+    path = home_dir / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
+    
+     # Connect to sql database
+    return db.connect(database=path, read_only=False)
 #%%
 def save_csv_to_user_data_folder(df_to_save: pd.DataFrame, filename: str):
     """
@@ -40,22 +55,22 @@ def save_csv_to_user_data_folder(df_to_save: pd.DataFrame, filename: str):
     except Exception as e:
         print(f"An error occurred: {e}")
 
-def build_to_be_annotated_data(target_file:str):
+def build_to_be_annotated_data(target_file:str, con:db.DuckDBPyConnection):
     """" Builds a CSV file with paragraphs and group mentions to be annotated. It selects random paragraphs from the group_mention table, for which the group mention is not in the ignore list.
         It creates a new column 'formatted_paragraph' that contains the paragraph with the group mention highlighted.
 
     Args:
         target_file (str): The path to the CSV file where the data will be saved.
+        con (db.DuckDBPyConnection): Connection to our database.
 
     Returns:
         None
     """
     print(f"Saving data to: {target_file}...")
     #@ todo not ignore groups, rather normalize them!!!!!
-    # ignore_groups = "('EPPOL','EOPOL','GPE','EOWIRT','EOSCI','EOFINANZ','EONGO', 'EOMEDIA', 'EOMIL')"
     # Get all labels
     excluded_labels = ['GPE', 'EPOWN']
-    labels = con.execute(f"select distinct(label) from group_mention where label not in {excluded_labels}").fetchdf().label.tolist()
+    labels = con.execute(f"SELECT DISTINCT(label) FROM group_mention WHERE label NOT IN {excluded_labels}").fetchdf().label.tolist()
     print(f"Current labels in Database: {labels}")
     # List for dataframes of each label
     dataframes = []
@@ -68,7 +83,7 @@ def build_to_be_annotated_data(target_file:str):
             WHERE g.label = '{label}' 
                 AND LENGTH(paragraph) <= 3000 
             ORDER BY RANDOM() 
-            LIMIT 10
+            LIMIT 20
         """
         dataframes.append(con.execute(sql).fetchdf())
         
@@ -79,15 +94,12 @@ def build_to_be_annotated_data(target_file:str):
 
 def main():
     """ Main function to execute the data preparation for annotation. """
+    con = connect_db()
+    con.begin() # start transaction
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    build_to_be_annotated_data(f'annotation_data_{timestamp}.csv')
-
+    build_to_be_annotated_data(f'annotation_data_{timestamp}.csv', con)
+    con.commit() # commit transaction
+    con.close()
 if __name__ == "__main__":
     main()
-    con.close()
 
-#%%
-con.execute("select label, count(*) as count from group_mention group by label order by count desc").fetchdf()
-#%%
-con.close()
-#%%
