@@ -198,6 +198,7 @@ def create_tables(con:duckdb.DuckDBPyConnection, reset_db:bool=False):
     """
     if reset_db:
         con.execute("DROP TABLE IF EXISTS group_mention")
+        con.execute("DROP TABLE IF EXISTS processed_speeches")
         con.execute("DROP SEQUENCE IF EXISTS group_mention_id_seq")
 
     # Create a sequence for the primary key
@@ -213,8 +214,15 @@ def create_tables(con:duckdb.DuckDBPyConnection, reset_db:bool=False):
             paragraph VARCHAR NOT NULL,
             annotation_paragraph VARCHAR NOT NULL, 
             inference_paragraph VARCHAR NOT NULL
-        )
-    """)
+            )
+        """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS processed_speeches (
+            id VARCHAR PRIMARY KEY NOT NULL REFERENCES speech(id) 
+            )
+        """)
+    
     con.commit()
     
 def smart_join(tokens):
@@ -351,7 +359,6 @@ def extract_groups(paragraph:list[tuple[str,str]]) -> list[tuple[str, str, str, 
 
 
 def extract_speeches(con:duckdb.DuckDBPyConnection, limit:int = 1000) -> pd.DataFrame:
-    #@todo speed up this query -> extract more than 1 entry at a time :)
     """Extracts a random speech from the database that has not been processed yet.
 
     Args:
@@ -365,11 +372,20 @@ def extract_speeches(con:duckdb.DuckDBPyConnection, limit:int = 1000) -> pd.Data
         FROM speech
         WHERE position NOT IN ('Präsidentin', 'Vizepräsidentin', 'Vizepräsident', 'Präsident')
               OR position IS NULL
-              AND id NOT IN (SELECT distinct(speech_id) FROM group_mention) -- check that speech wasn't already processed
+              AND id NOT IN (SELECT DISTINCT(id) FROM processed_speeches) -- check that speech wasn't already processed
         ORDER BY RANDOM()
         LIMIT ? 
         """
-    return con.execute(sql, (limit,)).fetchdf()
+    
+    extracted_speeches = con.execute(sql, (limit,)).fetchdf()
+    # Insert the speeches which we processed into our Database
+    #  DuckDB will automatically find the dataframe and read it.
+    con.execute("""
+        INSERT INTO processed_speeches (id)
+        SELECT id FROM extracted_speeches;
+    """)
+    
+    return extracted_speeches
 #%%
 def main():
     """
@@ -408,13 +424,16 @@ def main():
 
     
     total_start_time = time.time()
+    home = Path.home()
     # Connect to sql database
-    con = duckdb.connect(database='stance-detection-german-llm/data/database/german-parliament.duckdb', read_only=False)
+    path_to_db = home / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
+    con = duckdb.connect(database=path_to_db, read_only=False)
     
     print("--- Starting Batch Speech Processing ---")
     
     # Load ingthe classifier model once at the start.
-    model_path = "stance-detection-german-llm/models/bert-base-german-cased-finetuned-MOPE-L3_Run_3_Epochs_29"
+
+    model_path = home / "stance-detection-german-llm" / "models" / "bert-base-german-cased-finetuned-MOPE-L3_Run_3_Epochs_29"
     classifier = GroupClassifier(model_dir=model_path)
     
     # Build the group mention and paragraph table
@@ -517,7 +536,7 @@ def main():
     log_statistics(
         overall_stats=overall_statistics,
         elapsed_minutes=elapsed_time_minutes,
-        processed_speeches=args.limit,
+        processed_speeches=len(speeches_df),
         reset_db=args.reset_db
     )
     con.close()

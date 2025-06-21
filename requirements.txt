@@ -1,0 +1,8 @@
+datasets
+tensorflow
+vllm
+torch
+transformers
+duckdb
+pandas
+tqdm
