@@ -5,6 +5,7 @@ import pandas as pd
 import csv 
 from datetime import datetime
 import argparse 
+from tqdm import tqdm
 #%%
 
 def connect_db() -> db.DuckDBPyConnection:
@@ -56,7 +57,60 @@ def save_csv_to_user_data_folder(df_to_save: pd.DataFrame, filename: str):
     except Exception as e:
         print(f"An error occurred: {e}")
 
-def build_to_be_annotated_data(target_file:str, con:db.DuckDBPyConnection, label_limit:int=10):
+def get_sample_quantity(con:db.DuckDBPyConnection) -> pd.DataFrame:
+
+    sql = """
+        WITH FilteredData AS (
+            SELECT label, paragraph
+            FROM group_mention
+            WHERE label NOT IN ('GPOWN', 'GPE')
+              AND LENGTH(paragraph) <= 2000
+        ),
+        
+        -- get the punished total count
+        PunishedTotal AS (
+            SELECT SUM(
+                CASE
+                    -- Apply 1/40th weight for EOPOL and EPPOL
+                    WHEN label IN ('EOPOL', 'EPPOL') THEN 0.025
+                    -- Apply 1/5th weight for PFUNK
+                    WHEN label = 'PFUNK' THEN 0.2
+                    -- All other labels get full weight
+                    ELSE 1.0
+                END
+            ) AS punished_total_count
+            FROM FilteredData
+        )
+        
+        -- get the final sample number for each label
+        SELECT
+            fd.label,
+            ROUND(
+                10 + (
+                    (
+                        CASE
+                            -- 1/40th punishment to the count for EOPOL and EPPOL
+                            WHEN fd.label IN ('EOPOL', 'EPPOL') THEN (COUNT(*) * 0.025)
+                            -- 1/5th punishment to the count for PFUNK
+                            WHEN fd.label = 'PFUNK' THEN (COUNT(*) * 0.2)
+                            ELSE COUNT(*)
+                        END
+                    ) * 1.0 / pt.punished_total_count
+                ) * 750
+            )::INTEGER AS sampleNumber
+        FROM
+            FilteredData AS fd,
+            PunishedTotal AS pt
+        GROUP BY
+            fd.label, 
+            pt.punished_total_count
+        ORDER BY
+            sampleNumber DESC;
+    """
+
+    return con.execute(sql).fetchdf()
+
+def build_to_be_annotated_data(target_file:str, con:db.DuckDBPyConnection):
     """" Builds a CSV file with paragraphs and group mentions to be annotated. It selects random paragraphs from the group_mention table, for which the group mention is not in the ignore list.
         It creates a new column 'formatted_paragraph' that contains the paragraph with the group mention highlighted.
 
@@ -68,53 +122,54 @@ def build_to_be_annotated_data(target_file:str, con:db.DuckDBPyConnection, label
         None
     """
     print(f"Saving data to: {target_file}...")
-    #@ todo not ignore groups, rather normalize them!!!!!
-    # Get all labels
-    excluded_labels = ['GPE', 'EPOWN']
-    labels = con.execute(f"SELECT DISTINCT(label) FROM group_mention WHERE label NOT IN {excluded_labels}").fetchdf().label.tolist()
-    print(f"Current labels in Database: {labels}")
-    # List for dataframes of each label
+
+    sample_dataframe = get_sample_quantity(con)
+
+    # List of dataframes for each label
     dataframes = []
-    for label in labels:
+    
+    for index, row in tqdm(sample_dataframe.iterrows(), total=len(sample_dataframe), desc="Gathering Samples"):
+        # We use a dedicated sampling method (reservoir sampling) to get a good random distribution
+        # See: https://duckdb.org/docs/stable/sql/samples.html
         sql = f"""
+            -- Filter table for label
+            WITH FilteredResults AS (
+                SELECT
+                    *
+                FROM
+                    group_mention g
+                JOIN
+                    speech s ON g.speech_id = s.id
+                WHERE
+                    g.label = ?
+                    AND LENGTH(g.paragraph) <= 3000
+            )
+            -- Sampling from the pre-filtered results
             SELECT *
-            FROM group_mention g 
-                JOIN speech s 
-                ON g.speech_id = s.id 
-            WHERE g.label = '{label}' 
-                AND LENGTH(paragraph) <= 3000 
-            ORDER BY RANDOM() 
-            LIMIT ?
+            FROM FilteredResults
+            USING SAMPLE ({row.sampleNumber} ROWS)
+            REPEATABLE (100); --random seed
         """
-        dataframes.append(con.execute(sql,(label_limit,)).fetchdf())
+        
+        dataframes.append(con.execute(sql,(row.label,)).fetchdf())
         
     # Concat the entries for all labels
     data = pd.concat(dataframes, ignore_index=True)
+    data = data.sample(frac=1) # Shuffle dataframe, so that we have labels in random order when annotating
     save_csv_to_user_data_folder(data, target_file)
 
 
 def main():
     """ Main function to execute the data preparation for annotation. """
-
-    parser = argparse.ArgumentParser(description="Extract annotation data of mentions.")
-    
-    # Add an argument for the limit.
-    # We define its name (--limit), type (int), a default value, and a help message.
-    parser.add_argument(
-        "--limit", 
-        type=int, 
-        default=10, 
-        help="The maximum number of each label to extract."
-    )
-    # Get passed args
-    args = parser.parse_args()
-    
     con = connect_db()
     con.begin() # start transaction
+    
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    build_to_be_annotated_data(f'annotation_data_{timestamp}.csv', con, label_limit=args.limit)
+    build_to_be_annotated_data(f'annotation_data_{timestamp}.csv', con)
+    
     con.commit() # commit transaction
     con.close()
+    
 if __name__ == "__main__":
     main()
 

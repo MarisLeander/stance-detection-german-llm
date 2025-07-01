@@ -370,12 +370,14 @@ def extract_speeches(con:duckdb.DuckDBPyConnection, limit:int = 1000) -> pd.Data
     sql = """
         SELECT *
         FROM speech
-        WHERE position NOT IN ('Präsidentin', 'Vizepräsidentin', 'Vizepräsident', 'Präsident')
-              OR position IS NULL
-              AND id NOT IN (SELECT DISTINCT(id) FROM processed_speeches) -- check that speech wasn't already processed
+        WHERE (
+            position NOT IN ('Präsidentin', 'Vizepräsidentin', 'Vizepräsident', 'Präsident')
+            OR position IS NULL
+        )
+        AND id NOT IN (SELECT id FROM processed_speeches) -- check that speech wasn't already processed
         ORDER BY RANDOM()
-        LIMIT ? 
-        """
+        LIMIT ?;
+    """
     
     extracted_speeches = con.execute(sql, (limit,)).fetchdf()
     # Insert the speeches which we processed into our Database
