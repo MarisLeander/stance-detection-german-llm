@@ -231,9 +231,10 @@ def main():
     con.commit()
     
     print("Start processing of annotations...")
+ 
+    # ---- Build annotated_paragraphs table ----
     con.begin()
     path =  home_dir / "stance-detection-german-llm" / "data" / "annotated_data"/ "maris-2025-06-30-14-57-790f3829.csv"
-    # ---- Build annotated_paragraphs table ----
     process_primary_annotations(path, con)
     con.commit()
 
@@ -241,7 +242,7 @@ def main():
     annotator_files = [("maris-2025-06-30-14-57-790f3829.csv", "maris"),('harriet_tmp-2025-07-01-13-33-c16b5183.csv', 'harriet_tmp')]
 
     for file, name in annotator_files:
-        path =  home_dir / "stance-detection-german-llm" / "data" / "annotated_data"/ "maris-2025-06-30-14-57-790f3829.csv"
+        path =  home_dir / "stance-detection-german-llm" / "data" / "annotated_data"/ file
         con.begin()
         process_annotations(path, name, con)
         con.commit()
@@ -249,7 +250,7 @@ def main():
     
     if args.reset_db:
         con.begin()
-        create_test_engineering_split(con, True) # If the whole db is reset, we need to rebuild the engineering / test split
+        create_test_engineering_split(con) # If the whole db is reset, we need to rebuild the engineering / test split
         con.commit()
     
     con.close()
