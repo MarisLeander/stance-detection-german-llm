@@ -64,7 +64,7 @@ def create_annotation_table(con:db.DuckDBPyConnection, reset_annotations:bool=Fa
             id INTEGER NOT NULL,
             annotator VARCHAR(32) NOT NULL,
             annotated_paragraph_id INTEGER NOT NULL REFERENCES annotated_paragraphs(id),
-            stance VARCHAR(8) CHECK (stance IN ('favour', 'against', 'neither', 'not a group')),
+            stance VARCHAR(16) CHECK (stance IN ('favour', 'against', 'neither', 'not a group')),
             PRIMARY KEY(id, annotator)
         );
     """
