@@ -4,3 +4,4 @@ venv/
 .venv/
 hpc_token
 secrets.json
+.ipynb_checkpoints/secrets-checkpoint.json
