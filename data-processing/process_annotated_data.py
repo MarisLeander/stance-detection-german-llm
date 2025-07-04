@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse
 import pandas as pd
 import json
+import math
 
 def connect_to_db(db_path: str) -> db.DuckDBPyConnection:
     """
@@ -28,6 +29,7 @@ def create_data_tables(con:db.DuckDBPyConnection, reset_db:bool=False) -> None:
         None
     """
     if reset_db:
+        # con.execute("DROP TABLE IF EXISTS predictions")
         con.execute("DROP TABLE IF EXISTS annotations")
         con.execute("DROP TABLE IF EXISTS engineering_data")
         con.execute("DROP TABLE IF EXISTS test_data")
@@ -38,7 +40,8 @@ def create_data_tables(con:db.DuckDBPyConnection, reset_db:bool=False) -> None:
             id INTEGER PRIMARY KEY REFERENCES group_mention(id),
             group_text VARCHAR NOT NULL,
             inference_paragraph VARCHAR NOT NULL,
-            adjusted_span BOOLEAN NOT NULL
+            adjusted_span BOOLEAN NOT NULL,
+            agreed_label VARCHAR(16) CHECK (agreed_label IN ('favour', 'against', 'neither', 'not a group')) --The label which is agreed on between the annotators
             );
     """
     con.execute(sql)
@@ -83,7 +86,13 @@ def create_test_engineering_split(con:db.DuckDBPyConnection) -> None:
     """
 
     con.execute("CREATE TABLE IF NOT EXISTS engineering_data (id INTEGER PRIMARY KEY REFERENCES annotated_paragraphs(id));")
-
+    # Get count of not a group lables
+    overall_count = con.execute("SELECT COUNT(*) FROM annotated_paragraphs").fetchone()[0]
+    nag_count = con.execute("SELECT COUNT(*) FROM annotated_paragraphs WHERE agreed_label = 'not a group'").fetchone()[0]
+    remaining_para = overall_count - nag_count
+    engineering_amount = math.floor((remaining_para) * 0.1)
+    test_amount = math.ceil((remaining_para) * 0.9)
+    print(f"Overall {nag_count} paragraphs have been labeled 'not a group'. \n Engineering/test split will be {engineering_amount}/{test_amount} of the remaining {remaining_para} paragraphs")
     sql = """
         INSERT INTO engineering_data (id)
         SELECT id
@@ -189,6 +198,95 @@ def process_annotations(path:str, annotator:str, con:db.DuckDBPyConnection) -> N
         sql = "INSERT INTO annotations (id, annotator, annotated_paragraph_id, stance) VALUES (?, ?, ?, ?);"
         con.execute(sql, (id, annotator, paragraph_id, stance))
 
+def agree_on_labels(con:db.DuckDBPyConnection) -> None:
+    """ 
+    Sets the agreed labels for all annotated paragraphs in the following way:
+        1. If the annotators agree on a label, this will be the agreed label.
+        2. If the annotators don't agree on a label, and one annotator label 'not a group' the agreed label will be set to 'not a group'.
+        3. In the remaining case the agreed on label will be set to 'neither' since the paragraph is ambiguous.
+
+    Args:
+        con (db.DuckDBPyConnection): Our database connection
+        
+    Returns:
+        None
+    
+    """
+    
+    # --- 1. Get all labels where the annotators agree on and save them into our annotated_paragraphs ---
+    agreed_labels_sql = """
+        -- First, calculate the total number of unique annotators in the entire table
+        WITH AnnotatorTotal AS (
+            SELECT COUNT(DISTINCT annotator) AS total_annotators
+            FROM annotations
+        )
+        
+        -- Secont, find the paragraphs that meet both agreement and completeness criteria
+        SELECT
+            annotated_paragraph_id,
+            MIN(stance) AS agreed_stance -- Shows the stance everyone agreed on
+        FROM
+            annotations
+        GROUP BY
+            annotated_paragraph_id
+        HAVING
+            -- Condition 1: All annotators agree on the stance
+            COUNT(DISTINCT stance) = 1
+            
+            -- Condition 2: The number of annotators for this paragraph equals the total number of annotators (check if all annotators annotated the paragraph)
+            AND COUNT(annotator) = (SELECT total_annotators FROM AnnotatorTotal);
+    """
+    agreed_labels = con.execute(agreed_labels_sql).fetchdf()
+
+    for index, row in agreed_labels.iterrows():
+        # Insert agreed stance into annotated_paragraphs table
+        sql = "UPDATE annotated_paragraphs SET agreed_label = ? WHERE id = ?;"
+        con.execute(sql, (row['agreed_stance'], row['annotated_paragraph_id']))
+            
+    # --- 2. Get all labels where the annotators don't share agreement but one of the annotators labeled "not a group" ---
+    not_groups_disagreement_sql = """
+        -- First, get the total number of unique annotators for the completeness check
+        WITH AnnotatorTotal AS (
+            SELECT COUNT(DISTINCT annotator) AS total_annotators
+            FROM annotations
+        )
+        
+        -- Second, find the paragraphs that meet all three conditions (below)
+        SELECT
+            annotated_paragraph_id,
+            -- Aggregates the stances to shows the specific conflict
+            string_agg(annotator || ': ' || stance, ', ') AS conflicting_stances
+        FROM
+            annotations
+        GROUP BY
+            annotated_paragraph_id
+        HAVING
+            -- Condition 1: All annotators have labeled this paragraph
+            COUNT(annotator) = (SELECT total_annotators FROM AnnotatorTotal)
+        
+            -- Condition 2: The annotators do not agree (there is more than one unique stance)
+            AND COUNT(DISTINCT stance) > 1
+        
+            -- Condition 3: At least one of the stances in the group is 'not a group'
+            AND bool_or(stance = 'not a group');
+    """
+    disagreement_data = con.execute(not_groups_disagreement_sql).fetchdf()
+
+    for index, row in disagreement_data.iterrows():
+        sql = "UPDATE annotated_paragraphs SET agreed_label = 'not a group' WHERE id = ?;"
+        con.execute(sql, (row['annotated_paragraph_id'],))
+        
+    # --- 3. The only remaining case is, that the annotators didn't agree on a label, which is explicitly not 'not a group' ---
+    sql = """
+        UPDATE annotated_paragraphs 
+        SET agreed_label = 'neither' 
+        WHERE id IN (SELECT id 
+                     FROM annotated_paragraphs 
+                     WHERE agreed_label IS NULL);
+        """
+    # Set all remaining entries to 'neither', since the annotators couldn't agree on a label (except if one labeled 'not a group', which is handled before)
+    con.execute(sql)
+
 def main():
     """ Main function to process annotated data.
 
@@ -247,7 +345,13 @@ def main():
         process_annotations(path, name, con)
         con.commit()
 
+    # --- Extract agreed on labels and insert neither for labels which aren't agreed on.
+    con.begin()
+    agree_on_labels(con)
+    con.commit()
     
+    # --- Build test and engineering split ---
+    # @todo ignore not a group lables
     if args.reset_db:
         con.begin()
         create_test_engineering_split(con) # If the whole db is reset, we need to rebuild the engineering / test split

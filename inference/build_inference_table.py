@@ -35,8 +35,10 @@ def create_inference_table(con:db.DuckDBPyConnection, reset_predictions:bool=Fal
             id INTEGER NOT NULL REFERENCES test_data(id),
             run INTEGER NOT NULL,
             model VARCHAR NOT NULL,
+            technique VARCHAR NOT NULL, --e.g. 0-shot, k-shot, CoT, etc.
             prediction VARCHAR(8) NOT NULL CHECK (prediction IN ('favour', 'against', 'neither')),
             thoughts VARCHAR,
+            thinking_process VARCHAR,
             PRIMARY KEY(id, run, model)
         )
     """
