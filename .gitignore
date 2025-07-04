@@ -3,3 +3,4 @@ models/
 venv/
 .venv/
 hpc_token
+secrets.json
