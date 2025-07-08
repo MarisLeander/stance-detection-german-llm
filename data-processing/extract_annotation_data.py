@@ -64,7 +64,7 @@ def get_sample_quantity(con:db.DuckDBPyConnection) -> pd.DataFrame:
             SELECT label, paragraph
             FROM group_mention
             WHERE label NOT IN ('GPOWN', 'GPE')
-              AND LENGTH(paragraph) <= 2000
+              AND LENGTH(paragraph) < 3000
         ),
         
         -- get the punished total count
@@ -142,7 +142,7 @@ def build_to_be_annotated_data(target_file:str, con:db.DuckDBPyConnection):
                     speech s ON g.speech_id = s.id
                 WHERE
                     g.label = ?
-                    AND LENGTH(g.paragraph) <= 3000
+                    AND LENGTH(g.paragraph) < 3000
             )
             -- Sampling from the pre-filtered results
             SELECT *

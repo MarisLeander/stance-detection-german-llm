@@ -332,12 +332,12 @@ def main():
  
     # ---- Build annotated_paragraphs table ----
     con.begin()
-    path =  home_dir / "stance-detection-german-llm" / "data" / "annotated_data"/ "maris-2025-06-30-14-57-790f3829.csv"
+    path =  home_dir / "stance-detection-german-llm" / "data" / "annotated_data"/ "maris-processed-2025-06-30-14-57-790f3829.csv"
     process_primary_annotations(path, con)
     con.commit()
 
     # --- Build annotations table for each annotator ---
-    annotator_files = [("maris-2025-06-30-14-57-790f3829.csv", "maris"),('harriet_tmp-2025-07-01-13-33-c16b5183.csv', 'harriet_tmp')]
+    annotator_files = [("maris-processed-2025-06-30-14-57-790f3829.csv", "maris"),('harriet-processed-2025-07-06-16-42-e62bcc7f.csv', 'harriet')]
 
     for file, name in annotator_files:
         path =  home_dir / "stance-detection-german-llm" / "data" / "annotated_data"/ file
