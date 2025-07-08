@@ -6,3 +6,4 @@ transformers
 duckdb
 pandas
 tqdm
+google-genai

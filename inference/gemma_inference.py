@@ -18,6 +18,7 @@ def get_hf_api_key() -> str:
         return None
 
 # --- Set token as an environment variable for vLLM ---
+print("Retreiving Huggingface api key")
 hf_token = get_hf_api_key()
 if hf_token:
     os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
@@ -36,7 +37,7 @@ model_name = "google/gemma-3-27b-it"
 print("Initializing LLM with vLLM...")
 lm = LLM(
     model=model_name,
-    tensor_parallel_size=1, # This tells vLLM to use n GPUs
+    tensor_parallel_size=2, # This tells vLLM to use n GPUs
     trust_remote_code=True   # Often needed for newer models
 )
 

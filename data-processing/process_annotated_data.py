@@ -4,6 +4,7 @@ import argparse
 import pandas as pd
 import json
 import math
+from tqdm import tqdm 
 
 def connect_to_db(db_path: str) -> db.DuckDBPyConnection:
     """
@@ -29,7 +30,8 @@ def create_data_tables(con:db.DuckDBPyConnection, reset_db:bool=False) -> None:
         None
     """
     if reset_db:
-        # con.execute("DROP TABLE IF EXISTS predictions")
+        # con.execute("DROP TABLE IF EXISTS predictions") --only reset this if we want to wipe our predictions table. Handle with caution!
+        con.execute("DROP TABLE IF EXISTS few_shot_examples")
         con.execute("DROP TABLE IF EXISTS annotations")
         con.execute("DROP TABLE IF EXISTS engineering_data")
         con.execute("DROP TABLE IF EXISTS test_data")
@@ -71,44 +73,6 @@ def create_annotation_table(con:db.DuckDBPyConnection, reset_annotations:bool=Fa
             PRIMARY KEY(id, annotator)
         );
     """
-    con.execute(sql)
-
-def create_test_engineering_split(con:db.DuckDBPyConnection) -> None:
-    """
-    Creates our engineering, test splits.
-
-    Args:
-        con (db.DuckDBPyConnection): The connection to the DuckDB database.
-        reset_db (bool): Indicates if the database will be reset
-
-    Returns:
-        None
-    """
-
-    con.execute("CREATE TABLE IF NOT EXISTS engineering_data (id INTEGER PRIMARY KEY REFERENCES annotated_paragraphs(id));")
-    # Get count of not a group lables
-    overall_count = con.execute("SELECT COUNT(*) FROM annotated_paragraphs").fetchone()[0]
-    nag_count = con.execute("SELECT COUNT(*) FROM annotated_paragraphs WHERE agreed_label = 'not a group'").fetchone()[0]
-    remaining_para = overall_count - nag_count
-    engineering_amount = math.floor((remaining_para) * 0.1)
-    test_amount = math.ceil((remaining_para) * 0.9)
-    print(f"Overall {nag_count} paragraphs have been labeled 'not a group'. \n Engineering/test split will be {engineering_amount}/{test_amount} of the remaining {remaining_para} paragraphs")
-    sql = """
-        INSERT INTO engineering_data (id)
-        SELECT id
-        FROM annotated_paragraphs
-        USING SAMPLE reservoir(100 ROWS) REPEATABLE (42);
-        """
-    con.execute(sql)
-
-    con.execute("CREATE TABLE IF NOT EXISTS test_data (id INTEGER PRIMARY KEY REFERENCES annotated_paragraphs(id));")
-
-    sql = """
-        INSERT INTO test_data (id)
-        SELECT id
-        FROM annotated_paragraphs
-        WHERE id NOT IN (SELECT id from engineering_data);
-        """
     con.execute(sql)
     
     
@@ -287,6 +251,84 @@ def agree_on_labels(con:db.DuckDBPyConnection) -> None:
     # Set all remaining entries to 'neither', since the annotators couldn't agree on a label (except if one labeled 'not a group', which is handled before)
     con.execute(sql)
 
+
+def create_test_engineering_split(con:db.DuckDBPyConnection) -> None:
+    """
+    Creates our engineering, test splits.
+
+    Args:
+        con (db.DuckDBPyConnection): The connection to the DuckDB database.
+        reset_db (bool): Indicates if the database will be reset
+
+    Returns:
+        None
+    """
+
+    con.execute("CREATE TABLE IF NOT EXISTS engineering_data (id INTEGER PRIMARY KEY REFERENCES annotated_paragraphs(id));")
+    # Get count of not a group lables
+    overall_count = con.execute("SELECT COUNT(*) FROM annotated_paragraphs").fetchone()[0]
+    nag_count = con.execute("SELECT COUNT(*) FROM annotated_paragraphs WHERE agreed_label = 'not a group'").fetchone()[0]
+    remaining_para = overall_count - nag_count
+    engineering_amount = math.floor((remaining_para) * 0.1)
+    test_amount = math.ceil((remaining_para) * 0.9)
+    print(f"Overall {nag_count} paragraphs have been labeled 'not a group'. \n Engineering/test split will be {engineering_amount}/{test_amount} of the remaining {remaining_para} paragraphs")
+    sql = f"""
+        INSERT INTO engineering_data (id)
+        SELECT id
+        FROM annotated_paragraphs
+        WHERE agreed_label != 'not a group'
+        USING SAMPLE reservoir({engineering_amount} ROWS) REPEATABLE (42);
+        """
+    con.execute(sql)
+
+    con.execute("CREATE TABLE IF NOT EXISTS test_data (id INTEGER PRIMARY KEY REFERENCES annotated_paragraphs(id));")
+
+    sql = """
+        INSERT INTO test_data (id)
+        SELECT id
+        FROM annotated_paragraphs
+        WHERE agreed_label != 'not a group'
+            AND id NOT IN (SELECT id from engineering_data);
+        """
+    con.execute(sql)
+
+
+def create_few_shot_table(con:db.DuckDBPyConnection) -> None:
+    """
+    Extracts sample for few-shot approaches
+
+    Args:
+        con (db.DuckDBPyConnection): The connection to the DuckDB database.
+    """
+    create_table_sql = """
+        CREATE TABLE IF NOT EXISTS few_shot_examples (
+            test_id INTEGER NOT NULL REFERENCES test_data(id),
+            k_shot VARCHAR NOT NULL CHECK(k_shot IN('1-shot','5-shot','10-shot')),
+            sample_id INTEGER NOT NULL REFERENCES engineering_data(id)
+        );
+    """
+    con.execute(create_table_sql)
+    
+    test_data = con.execute("SELECT id FROM test_data").fetchdf()
+    shots = [1,5,10]
+    
+    for shot in tqdm(shots, desc="Building few_shot_examples table..."):
+        for _, row in test_data.iterrows():
+            test_id = int(row['id'])
+            k_shot = f"{shot}-shot"
+            sql = f"""
+                SELECT id
+                FROM engineering_data
+                USING SAMPLE reservoir({shot} ROWS) REPEATABLE (42);
+                """
+            sample_ids = con.execute(sql).fetchdf()
+            for _, row in sample_ids.iterrows():
+                sample_id = int(row['id'])
+                con.execute("INSERT INTO few_shot_examples (test_id, k_shot, sample_id) VALUES (?, ?, ?)", (test_id, k_shot, sample_id))
+            
+            
+
+
 def main():
     """ Main function to process annotated data.
 
@@ -355,6 +397,12 @@ def main():
     if args.reset_db:
         con.begin()
         create_test_engineering_split(con) # If the whole db is reset, we need to rebuild the engineering / test split
+        con.commit()
+
+    # --- Build few-shot id's table ----
+    if args.reset_db:
+        con.begin()
+        create_few_shot_table(con)
         con.commit()
     
     con.close()
