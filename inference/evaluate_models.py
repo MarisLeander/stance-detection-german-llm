@@ -95,11 +95,15 @@ def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyCo
             WHERE
                 maris.annotator = 'maris'
                 AND harriet.annotator = 'harriet'
-    )
+    );
     """
     con.execute(view_sql)
+
+    # The Ground Truth is 'favour' if harriet_stance == 'favour' OR maris_stance == 'favour'.
+    # The Ground Truth is 'not favour' if harriet_stance != 'favour' AND maris_stance != 'favour'.
     
     # Either one of the annotators stance annotations has to agree on the predictions of the model
+    # e.g. model predicts 'favour' AND the Ground Truth is 'favour'.
     tp_sql = """
         SELECT COUNT(DISTINCT annotated_paragraph_id)
         FROM 
@@ -109,7 +113,8 @@ def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyCo
             AND (harriet_stance = ? OR maris_stance = ?);
     """
     tp = con.execute(tp_sql, (tuple(label_pred_ids), label, label)).fetchone()[0]
-    # No one of the annotators stance annotations agrees on the predictions of the model
+    # None of the annotators stance annotations agrees on the predictions of the model
+    # e.g. model predicts 'favour' AND the Ground Truth is 'not favour'.
     fp_sql = """
         SELECT COUNT(DISTINCT annotated_paragraph_id)
         FROM 
@@ -122,6 +127,7 @@ def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyCo
     fp = con.execute(fp_sql, (tuple(label_pred_ids), label, label)).fetchone()[0]
 
     # Ground truth is not the label and the model doesn't predict the label
+    # e.g. model predicts 'not favour' AND the Ground Truth is 'not favour'.
     tn_sql = """
         SELECT COUNT(DISTINCT annotated_paragraph_id)
         FROM 
@@ -133,7 +139,8 @@ def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyCo
     """
     tn = con.execute(tn_sql, (tuple(neg_label_pred_ids), label, label)).fetchone()[0]
 
-    #  Ground trouth is the label, i.e. one of the annotators annotated it, but the model annotated something else
+    # Ground trouth is the label, i.e. one of the annotators annotated it, but the model annotated something else
+    # e.g. model predicts 'not favour' (i.e., 'against' or 'neither') AND the Ground Truth is 'favour'.
     fn_sql = """
         SELECT COUNT(DISTINCT annotated_paragraph_id)
         FROM 
@@ -150,6 +157,7 @@ def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyCo
     f1_score = calculate_f1(tp, fp, tn, fn)
     print(f"F1-score: {f1_score}")
     # Drop our view
+    con.execute("DROP VIEW LabelersAnnotations;")
     return f1_score
 
 def calculate_macro_f1(predictions_df:pd.DataFrame, con:db.DuckDBPyConnection):
