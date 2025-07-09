@@ -32,14 +32,14 @@ def create_inference_table(con:db.DuckDBPyConnection, reset_predictions:bool=Fal
 
     sql = """
         CREATE TABLE IF NOT EXISTS predictions (
-            id INTEGER NOT NULL REFERENCES test_data(id),
-            run INTEGER NOT NULL,
+            id INTEGER NOT NULL REFERENCES engineering_data(id), --CHANGE THIS TO test_data!!!!
             model VARCHAR NOT NULL,
+            run VARCHAR,
             technique VARCHAR NOT NULL, --e.g. 0-shot, k-shot, CoT, etc.
             prediction VARCHAR(8) NOT NULL CHECK (prediction IN ('favour', 'against', 'neither')),
-            thoughts VARCHAR,
-            thinking_process VARCHAR,
-            PRIMARY KEY(id, run, model, technique)
+            thoughts VARCHAR, -- direct output from an api or <think><\\think} from a reasoning model
+            thinking_process VARCHAR, -- thinking in the output for CoT prompting
+            PRIMARY KEY(id, model, run, technique)
         )
     """
 
