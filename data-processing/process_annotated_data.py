@@ -308,7 +308,8 @@ def create_few_shot_table(con:db.DuckDBPyConnection) -> None:
         );
     """
     con.execute(create_table_sql)
-    
+
+    # We only take examples where our annotators agreed on a label!
     test_data = con.execute("SELECT id FROM test_data").fetchdf()
     shots = [1,5,10]
     
@@ -317,13 +318,34 @@ def create_few_shot_table(con:db.DuckDBPyConnection) -> None:
             test_id = int(row['id'])
             k_shot = f"{shot}-shot"
             sql = f"""
-                SELECT id
-                FROM engineering_data
+                WITH LabelersAnnotations AS (
+                        SELECT
+                            maris.annotated_paragraph_id AS annotated_paragraph_id,
+                            maris.stance AS maris_stance,
+                            harriet.stance AS harriet_stance
+                        FROM
+                            annotations AS maris
+                        JOIN
+                            annotations AS harriet ON maris.annotated_paragraph_id = harriet.annotated_paragraph_id
+                        WHERE
+                            maris.annotator = 'maris'
+                            AND harriet.annotator = 'harriet'
+                )
+                SELECT eg.id 
+                FROM engineering_data td 
+                    JOIN LabelersAnnotations la 
+                    ON eg.id = la.annotated_paragraph_id
                 USING SAMPLE reservoir({shot} ROWS) REPEATABLE (42);
-                """
+            """
+            # sql = f"""
+            #     SELECT id
+            #     FROM engineering_data
+            #     USING SAMPLE reservoir({shot} ROWS) REPEATABLE (42);
+            #     """
             sample_ids = con.execute(sql).fetchdf()
             for _, row in sample_ids.iterrows():
                 sample_id = int(row['id'])
+                
                 con.execute("INSERT INTO few_shot_examples (test_id, k_shot, sample_id) VALUES (?, ?, ?)", (test_id, k_shot, sample_id))
             
             

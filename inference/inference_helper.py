@@ -17,6 +17,28 @@ def connect_to_db() -> db.DuckDBPyConnection:
     db_path = home_dir / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
     return db.connect(database=db_path, read_only=False)
 
+def already_processed(paragraph_id:int, model:str, prompt_type:str, technique:str) -> bool:
+    """ Checks if a certain model, prompt_type, technique combination already classified the paragraph.
+
+    Args: 
+        paragraph_id (int): The id of the predicted paragraph (corresponds to an annotated paragraph)
+        model (str): The name of our model (e.g. 'gemini-2.5-pro')
+        prompt_type (str): Corresponds to a prompt template
+        technique (str): Prompting technique (e.g. 'zero-shot')
+        
+    Returns:
+        bool: True if the model, prompt_type, technique combination already classified the paragraph.
+    """
+
+    # SELECT EXISTS returns a boolean: True if the subquery finds any rows, False otherwise.
+    sql = "SELECT EXISTS(SELECT 1 FROM predictions WHERE id = ? AND model = ? AND prompt_type = ? AND technique = ?);"
+    
+    # Execute the query and fetch the single boolean result
+    con = connect_to_db()
+    exists = con.execute(sql, (paragraph_id, model, prompt_type, technique)).fetchone()[0]
+    con.close()
+    return exists
+    
 def get_prompt_list(cot:bool=False, few_shot:bool=False) -> list[str]:
     """ This function returns a list of prompts for the model to benchmark on.
 
@@ -25,9 +47,9 @@ def get_prompt_list(cot:bool=False, few_shot:bool=False) -> list[str]:
         few_shot (bool): Indicates wheter the model needs few_shot prompts or not
     """
     if cot:
-        pass #@todo
+        pass
     elif few_shot:
-        pass #@todo
+        return []
     else:
         return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_more_context", "english_vanilla"]
     

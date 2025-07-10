@@ -6,7 +6,7 @@ from pathlib import Path
 from google.genai import types
 from google.genai.errors import ClientError
 from google.genai.errors import ServerError
-from inference_helper import get_formatted_prompt, get_prompt_list, get_engineering_data, insert_prediction, get_test_batch
+from inference_helper import get_formatted_prompt, get_prompt_list, get_engineering_data, insert_prediction, get_test_batch, already_processed
 
 def get_gemini_api_key() -> str:
     """Gets the users Google Gemini api key from the config file
@@ -111,17 +111,24 @@ def gemini_predictions(prompt_batch:list[dict], client:genai.Client):
         # Get prompt information
         prompt = prompt_dict.get("prompt")
         paragraph_id = prompt_dict.get("paragraph_id")
+        model = 'gemini-2.5-pro'
         prompt_type = prompt_dict.get("prompt_type")
-        # Get api response
-        response = do_gemini_api_call(prompt, paragraph_id, client)
-        thoughts, prediction = parse_gemini_response(response)
-        # Insert pred into db
-        insert_prediction(paragraph_id, 'gemini-2.5-pro', prompt_type, 'zero_shot', prediction, thoughts, None)
-    
+        technique = 'zero_shot'
+        already_processed = already_processed(paragraph_id, model, prompt_type, technique)
+        if already_processed:
+            # We dont need to waste credits then...
+            continue
+        else:
+            # Get api response
+            response = do_gemini_api_call(prompt, paragraph_id, client)
+            thoughts, prediction = parse_gemini_response(response)
+            # Insert pred into db
+            insert_prediction(paragraph_id, model, prompt_type, technique, prediction, thoughts, None)
+        
            
 def process_test_set():
     client = get_client()
-    to_be_predicted_batch = get_engineering_data(sample_size=1)
+    to_be_predicted_batch = get_engineering_data(sample_size=30)
     prompt_types = get_prompt_list(cot=False, few_shot=False)
     for prompt_type in prompt_types:
         print(f"Calling api with samples and prompt: {prompt_type}...")
