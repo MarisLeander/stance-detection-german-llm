@@ -49,17 +49,19 @@ def get_prompt_list(cot:bool=False, few_shot:bool=False) -> list[str]:
     if cot:
         pass
     elif few_shot:
-        return []
+        return ["german_vanilla_expert",  "german_vanilla_expert_more_context"]
     else:
-        return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_more_context", "english_vanilla"]
+        return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "german_more_context", "english_vanilla"]
     
 
-def get_test_batch(batch:pd.DataFrame, prompt_type:str) -> list[dict]:
+def get_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None) -> list[dict]:
     """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
 
     Args:
         batch (pd.DataFrame): Our to be annotated data from annotated_paragraphs table
         prompt_type (str): Corresponds to a prompt template
+        few_shot (boo): Whether its a few_shot prompt or not
+        shots (str): how many shots (e.g. 1,5 or 10)
 
     Returns:
         list[dict]: Our prompt batch
@@ -69,7 +71,14 @@ def get_test_batch(batch:pd.DataFrame, prompt_type:str) -> list[dict]:
         paragraph = row['inference_paragraph']
         paragraph_id = row['id']
         group = row['group_text']
-        prompt = get_formatted_prompt(paragraph, group, prompt_type)
+        promp = ""
+        if few_shot:
+            if shots is None:
+                raise ValueError('Number of shots have to be specified!')
+            else:
+                prompt = get_formatted_few_shot_prompt(paragraph_id, shots, paragraph, group, prompt_type)
+        else:
+            prompt = get_formatted_prompt(paragraph, group, prompt_type)
         # append formatted prompt to batch
         helper_dict = {
             "paragraph_id":paragraph_id,
@@ -104,6 +113,27 @@ def get_engineering_data(sample_size:int=1):
     con.close()
     return data
 
+def build_few_shot_examples(test_paragraph_id:int, shots:int) -> str:
+    con = connect_to_db()
+    few_show_sql = """
+        SELECT * 
+        FROM engineering_few_shot_examples fe --CHANGE THIS TO few_shot_examples
+        JOIN annotated_paragraphs ap
+            ON fe.sample_id = ap.id
+        WHERE fe.eng_id = ? AND fe.k_shot = ?
+    """
+    few_shot_examples = con.execute(few_show_sql, (test_paragraph_id, shots)).fetchdf()
+    example_string = ""
+    
+    for _, row in few_shot_examples.iterrows():
+        paragraph = row['inference_paragraph']
+        group = row['group_text']
+        label = row['agreed_label']
+        example_string += f"Textabschnitt: {paragraph}\nTarget: {group}\nLabel: {label}\n\n"
+        
+    con.close()
+    return example_string
+
 def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:str, prediction:str, thinking_process:str, thoughts:str):
     """ This function is used to insert a models prediction into our db.
 
@@ -137,6 +167,35 @@ def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:st
         con.close()
 
 
+def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:str, group:str, prompt_type:str) -> str:
+    few_shot_string = build_few_shot_examples(test_paragraph_id, shots)
+    if prompt_type == 'german_vanilla_expert':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Targel: {group}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_more_context':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            Definition der Kategorien:
+            -`favour`: Die Haltung ist eindeutig und direkt positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
+            - `against`: Die Haltung ist eindeutig und direkt negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
+            - `neither`: Dies ist die Standardkategorie im Zweifelsfall. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen).
+        
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Target: {group}
+            Label:
+        """
+
+
+
+    
 def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
     if prompt_type == "thinking_guideline":
         # Zero shot
@@ -222,7 +281,19 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
         """
     elif prompt_type == 'german_vanilla_expert':
         return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
-        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+            
+            Textabschnitt: {paragraph}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_more_context':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            Definition der Kategorien:
+            -`favour`: Die Haltung ist eindeutig und direkt positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
+            - `against`: Die Haltung ist eindeutig und direkt negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
+            - `neither`: Dies ist die Standardkategorie im Zweifelsfall. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen).
             
             Textabschnitt: {paragraph}
             Label:
@@ -336,3 +407,7 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
             
             **Haltung:**
         """
+
+if __name__ == "__main__":
+    print(get_formatted_few_shot_prompt(113212, '5-shot', 'Das hier ist ein <span>TEST<\span>', 'TEST', 'german_vanilla_expert'),'\n')
+    print(get_formatted_few_shot_prompt(113212, '5-shot', 'Das hier ist ein <span>TEST<\span>', 'TEST', 'german_vanilla_expert_more_context'))

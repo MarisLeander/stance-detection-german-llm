@@ -300,6 +300,25 @@ def create_few_shot_table(con:db.DuckDBPyConnection) -> None:
     Args:
         con (db.DuckDBPyConnection): The connection to the DuckDB database.
     """
+    con.begin()
+    # Create view to later compare our annotated paragraphs, on where our annotators agreed on a label.
+    create_view_sql = """
+            CREATE VIEW IF NOT EXISTS LabelersAnnotations AS (
+                SELECT
+                  maris.annotated_paragraph_id AS annotated_paragraph_id,
+                  maris.stance AS maris_stance,
+                  harriet.stance AS harriet_stance
+                FROM
+                  annotations AS maris
+                JOIN
+                  annotations AS harriet ON maris.annotated_paragraph_id = harriet.annotated_paragraph_id
+                WHERE
+                  maris.annotator = 'maris'
+                  AND harriet.annotator = 'harriet'
+              );
+        """
+    con.execute(create_view_sql)
+    # Create table for our few-shot examples
     create_table_sql = """
         CREATE TABLE IF NOT EXISTS few_shot_examples (
             test_id INTEGER NOT NULL REFERENCES test_data(id),
@@ -318,37 +337,89 @@ def create_few_shot_table(con:db.DuckDBPyConnection) -> None:
             test_id = int(row['id'])
             k_shot = f"{shot}-shot"
             sql = f"""
-                WITH LabelersAnnotations AS (
-                        SELECT
-                            maris.annotated_paragraph_id AS annotated_paragraph_id,
-                            maris.stance AS maris_stance,
-                            harriet.stance AS harriet_stance
-                        FROM
-                            annotations AS maris
-                        JOIN
-                            annotations AS harriet ON maris.annotated_paragraph_id = harriet.annotated_paragraph_id
-                        WHERE
-                            maris.annotator = 'maris'
-                            AND harriet.annotator = 'harriet'
+                WITH ParaAgreedLabels AS (
+                    SELECT * 
+                    FROM engineering_data eg 
+                      JOIN LabelersAnnotations la 
+                      ON eg.id = la.annotated_paragraph_id
+                    WHERE maris_stance = harriet_stance 
                 )
-                SELECT eg.id 
-                FROM engineering_data td 
-                    JOIN LabelersAnnotations la 
-                    ON eg.id = la.annotated_paragraph_id
-                USING SAMPLE reservoir({shot} ROWS) REPEATABLE (42);
+                SELECT id 
+                FROM ParaAgreedLabels
+                USING SAMPLE reservoir({shot} ROWS) REPEATABLE ({test_id}); --The id of the paragraph is the random seed
             """
-            # sql = f"""
-            #     SELECT id
-            #     FROM engineering_data
-            #     USING SAMPLE reservoir({shot} ROWS) REPEATABLE (42);
-            #     """
             sample_ids = con.execute(sql).fetchdf()
             for _, row in sample_ids.iterrows():
                 sample_id = int(row['id'])
                 
                 con.execute("INSERT INTO few_shot_examples (test_id, k_shot, sample_id) VALUES (?, ?, ?)", (test_id, k_shot, sample_id))
-            
-            
+    con.execute("DROP VIEW IF EXISTS LabelersAnnotations;")
+    con.commit()
+
+
+def create_engineering_few_shot_table(con:db.DuckDBPyConnection) -> None:
+    """
+    Extracts sample for engineering few-shot approaches
+
+    Args:
+        con (db.DuckDBPyConnection): The connection to the DuckDB database.
+    """
+    con.begin()
+    # Create view to later compare our annotated paragraphs, on where our annotators agreed on a label.
+    create_view_sql = """
+            CREATE VIEW IF NOT EXISTS LabelersAnnotations AS (
+                SELECT
+                  maris.annotated_paragraph_id AS annotated_paragraph_id,
+                  maris.stance AS maris_stance,
+                  harriet.stance AS harriet_stance
+                FROM
+                  annotations AS maris
+                JOIN
+                  annotations AS harriet ON maris.annotated_paragraph_id = harriet.annotated_paragraph_id
+                WHERE
+                  maris.annotator = 'maris'
+                  AND harriet.annotator = 'harriet'
+              );
+        """
+    con.execute(create_view_sql)
+    # Create table for our few-shot examples
+    create_table_sql = """
+        CREATE TABLE IF NOT EXISTS engineering_few_shot_examples (
+            eng_id INTEGER NOT NULL REFERENCES engineering_data(id),
+            k_shot VARCHAR NOT NULL CHECK(k_shot IN('1-shot','5-shot','10-shot')),
+            sample_id INTEGER NOT NULL REFERENCES engineering_data(id)
+        );
+    """
+    con.execute(create_table_sql)
+
+    # 
+    eng_data = con.execute("SELECT id FROM engineering_data").fetchdf()
+    shots = [1,5,10]
+    
+    for shot in tqdm(shots, desc="Building few_shot_examples table..."):
+        for _, row in eng_data.iterrows():
+            eng_id = int(row['id'])
+            k_shot = f"{shot}-shot"
+            sql = f"""
+                WITH ParaAgreedLabels AS (
+                    SELECT * 
+                    FROM engineering_data eg 
+                      JOIN LabelersAnnotations la 
+                      ON eg.id = la.annotated_paragraph_id
+                    WHERE maris_stance = harriet_stance 
+                    AND eg.id <> {eng_id} -- We need to make sure, during engineering, that a paragraph can't be in its few-shot examples
+                )
+                SELECT id 
+                FROM ParaAgreedLabels
+                USING SAMPLE reservoir({shot} ROWS) REPEATABLE ({eng_id}); --The id of the paragraph is the random seed
+            """
+            sample_ids = con.execute(sql).fetchdf()
+            for _, row in sample_ids.iterrows():
+                sample_id = int(row['id'])
+                
+                con.execute("INSERT INTO engineering_few_shot_examples (eng_id, k_shot, sample_id) VALUES (?, ?, ?)", (eng_id, k_shot, sample_id))
+    con.execute("DROP VIEW IF EXISTS LabelersAnnotations;")
+    con.commit()
 
 
 def main():
@@ -366,9 +437,7 @@ def main():
     db_path = home_dir / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
     # Get db connection
     con = connect_to_db(db_path)
-
-
-
+    
     # build argparser, to pass information whether to reset db or not when starting the script
     parser = argparse.ArgumentParser(description="Process annotated data.")
 
@@ -425,11 +494,11 @@ def main():
     if args.reset_db:
         con.begin()
         create_few_shot_table(con)
+        create_engineering_few_shot_table(con)
         con.commit()
     
     con.close()
     print("Finished processing")
-
 
 
 if __name__ == "__main__":
