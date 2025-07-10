@@ -60,7 +60,8 @@ def deepseek_inference(prompt_batch, llm:vllm.entrypoints.llm.LLM, sampling_para
             # The 'prompt' here will be the long, formatted string with special tokens
             original_prompt_info = output.prompt
             generated_text = output.outputs[0].text
-            thinking, prediction = parse_r1_response(output.outputs[0].text)
+            print(generated_text)
+            thinking, prediction = parse_r1_response(generated_text)
             print(f"Thinking: {thinking}\n Answer: {prediction}")
             paragraph_id = prompt_dict.get("paragraph_id")
             prompt_type = prompt_dict.get("prompt_type")

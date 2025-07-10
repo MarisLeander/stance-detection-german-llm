@@ -61,7 +61,9 @@ def gemma_cot_predictions(prompt_batch, llm:vllm.entrypoints.llm.LLM):
     response = do_gemma_inference(prompt, engineering_id, llm, sampling_params)
     pass
     
-def gemma_zero_shot_predictions(prompt_batch, llm:vllm.entrypoints.llm.LLM):
+def gemma_predictions(prompt_batch:list[dict], llm:vllm.entrypoints.llm.LLM):
+    """ Function for zero and few-shot predictions, since they have similarly structured output.
+    """
     # Define sampling parameters. We need fewer if CoT is not needed. This speed up the model, if it generates non-sense
     sampling_params = SamplingParams(temperature=0.0, max_tokens=20)
     
@@ -79,9 +81,10 @@ def gemma_zero_shot_predictions(prompt_batch, llm:vllm.entrypoints.llm.LLM):
 def process_test_set(llm:vllm.entrypoints.llm.LLM):
     to_be_predicted_batch = get_engineering_data(sample_size=1)
     prompt_types = get_prompt_list(cot=False, few_shot=False)
-    for prompt_type in prompt_types:
+    
+    for prompt_type in tqdm(prompt_types, desc=f"Calling api with samples and prompt: {prompt_type}"):
         prompt_batch = get_test_batch(to_be_predicted_batch, prompt_type)
-        gemma_zero_shot_predictions(prompt_batch, llm)
+        gemma_predictions(prompt_batch, llm)
            
         
 
