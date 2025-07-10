@@ -1,34 +1,5 @@
-import time
-from tqdm import tqdm
-from datetime import datetime
 import duckdb as db
-from google import genai
-from google.genai import types
-from google.genai.errors import ClientError
-from google.genai.errors import ServerError
-from pathlib import Path
-from duckdb import ConstraintException
-import json
-
-def get_gemini_api_key() -> str:
-    """Gets the users Google Gemini api key from the config file
-
-    Args:
-        None
-
-    Returns:
-        The Google Gemini api key of the user
-    """
-
-    home_dir = Path.home()
-    path = home_dir / "stance-detection-german-llm" / "secrets.json"
-    try:
-        with open(path, "r") as config_file:
-            config = json.load(config_file)
-        return config.get("gemini_api_key")
-    except FileNotFoundError:
-        print(f"Error: secrets file not found at {path}")
-        return None
+import pandas as pd
 
 def connect_to_db() -> db.DuckDBPyConnection:
     """
@@ -44,73 +15,24 @@ def connect_to_db() -> db.DuckDBPyConnection:
     db_path = home_dir / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
     return db.connect(database=db_path, read_only=False)
 
-def get_client() -> genai.Client:
-    return genai.Client(api_key=get_gemini_api_key())
-
-def write_log(msg: str, logfile: str):
-    """Writes a message to the log file.
+def get_prompt_list(cot:bool=False, few_shot:bool=False) -> list[str]:
+    """ This function returns a list of prompts for the model to benchmark on.
 
     Args:
-        msg: The message to write to the log file
-        logfile: The name of the log file
-
-    Returns:
-        None
+        cot (bool): Indicates wheter the model needs CoT prompts or not
+        few_shot (bool): Indicates wheter the model needs few_shot prompts or not
     """
-    home = Path.home()
+    if cot:
+        pass #@todo
+    elif few_shot:
+        pass #@todo
+    else:
+        return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_more_context", "english_vanilla"]
     
-    file_path = home / "stance-detection-german-llm" / "inference" / "gemini_inference_logs" / logfile
-    with open(file_path, "a") as log_file:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_file.write(f"{timestamp}\n{msg}\n\n")
-
-def do_gemini_api_call(prompt:str, input_data, client:genai.Client) -> dict:
-    """ Calls the Gemini API with the given prompt and input data
-
-    Args:
-        prompt: The prompt to be sent to the API
-        input_data: The data to be sent to the API
-        client: The Google Gemini client
-    Returns:
-        The response from the API
-    """
-    response = None
-    successful_api_call = False
-    i = 0
-
-    while not successful_api_call:
-        try:
-            response = client.models.generate_content(
-                model='gemini-2.5-pro',
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    thinking_config=types.ThinkingConfig(
-                        include_thoughts=True
-                    )
-                )
-            )
-            successful_api_call = True
-        except (ClientError, ServerError) as e:
-            i += 1
-            if i == 5:
-                error = f"""Failed to call the gemini api 5 times
-                        Error: {e}
-                        Input data: {input_data}"""
-                write_log(error, "api_call_error.txt")
-                return {}  # Return an empty dict to avoid None
-            else:
-                time.sleep(5)  # Sleep before retrying
-                continue
-
-    # If we exit the loop normally, we got a successful API call
-    return response
-
 def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
-    prompt = None
     if prompt_type == "thinking_guideline":
         # Zero shot
-        prompt = f"""
+        return f"""
             **Rolle und Ziel:**
             Du bist ein unparteiischer Experte für politische Diskursanalyse. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer spezifischen sozialen Gruppe zu identifizieren.
             
@@ -148,7 +70,7 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
             """
     elif prompt_type == "thinking_guideline_higher_standards":
         # Zero shot with higher standards for favour / against so the model rather uses neither
-        prompt = f"""
+        return f"""
             **Rolle und Ziel:**
             Du agierst als streng unparteiischer Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer spezifisch markierten Gruppe zu klassifizieren.
             
@@ -184,8 +106,14 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
             
             **Haltung:**
             """
+    elif prompt_type == 'german_vanilla':
+        return f"""Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+            
+            Textabschnitt: {paragraph}
+            Label:
+        """
     elif prompt_type == 'german_vanilla_expert':
-        prompt = f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
         Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
             
             Textabschnitt: {paragraph}
@@ -193,7 +121,7 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
         """
     elif prompt_type == 'german_more_context':
         # Simple zero shot prompt for gemma3 which doesn't incorporate CoT
-        prompt = f"""
+        return f"""
             **Rolle und Ziel:**
             Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
             
@@ -227,44 +155,22 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
             """
     elif prompt_type == 'english_vanilla':
         # Vanilla prompt as in \citet{zhang_sentiment_2023}
-        prompt = f""" Please perform Stance Detection task. Given the Paragraph of a speech, assign a sentiment label expressed by the speaker towards "{group}" from [’against’, ’favor’, ’none’]. Return label only without any other text.
+        return f""" Please perform Stance Detection task. Given the Paragraph of a speech, assign a sentiment label expressed by the speaker towards "{group}" from [’against’, ’favor’, ’neither’]. Return label only without any other text.
 
         Paragraph: {paragraph}
         Label:
         """
-    return prompt
-    
-def gemini_predictions(paragraph:str, group:str, engineering_id:int, prompt_type:str, con:db.DuckDBPyConnection):
-    client = get_client()
-    # Get prompt
-    prompt = get_formatted_prompt(paragraph, group, prompt_type)
-    # Get api response
-    response = do_gemini_api_call(prompt, engineering_id, client)
-    # Analyse response
-    first_candidate = response.candidates[0]
-    thoughts = ""
-    response = ""
-    for part in first_candidate.content.parts:
-        if part.thought:
-            thoughts += part.text
-        else:
-            response += part.text
 
+def get_test_batch(batch:pd.DataFrame, prompt_type:str)
+def get_test_data(sample_size:int=1)
     sql = """
-        INSERT INTO predictions (id, model, run, technique, prediction, thoughts) 
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
-        """
-    # Insert prediction into db
-    try:
-        con.execute(sql, (engineering_id, "gemini-2.5-pro", prompt_type,"zero-shot", response, thoughts))
-    except ConstraintException:
-        # If the model fails to provide output out of ['favour', 'against', 'neither']
-        con.execute(sql, (engineering_id, "gemini-2.5-pro", prompt_type,"zero-shot", None, thoughts))
-    
-
-def process_test_set(con:db.DuckDBPyConnection):
-    test_set = con.execute("SELECT * FROM engineering_data JOIN annotated_paragraphs USING(id) ORDER BY RANDOM() LIMIT 20").fetchdf()
+        SELECT id, inference_paragraph, group_text 
+        FROM engineering_data 
+            JOIN annotated_paragraphs USING(id) 
+        ORDER BY RANDOM() 
+        LIMIT ?
+    """
+    test_set = con.execute(sql, (sample_size,)).fetchdf()
     prompt_types = ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla_expert", "german_more_context", "english_vanilla"]
     for prompt_type in prompt_types:
         for _,row in tqdm(test_set.iterrows(), total=len(test_set), desc=f"Calling api with samples and prompt: {prompt_type}"):
@@ -273,28 +179,32 @@ def process_test_set(con:db.DuckDBPyConnection):
             group = row['group_text']
             agreed_label = row['agreed_label']
 
-            gemini_predictions(paragraph, group, engineering_id, prompt_type, con)
-           
-        
-    
+def insert_prediction(id:int, model:str, prompt_type:str, technique:str, prediction:str, thinking_process:str, thoughts:str):
+    """ This function is used to insert a models prediction into our db.
 
-def main():
+    Args:
+        id (int): The id of the predicted paragraph (corresponds to an annotated paragraph)
+        model (str): The name of our model (e.g. 'gemini-2.5-pro')
+        prompt_type (str): Corresponds to a prompt template
+        technique (str): Prompting technique (e.g. 'zero-shot')
+        prediction (str): The models predicted stance (e.g. 'favour')
+        thinking_process (str): The output thinking process of reasoning models (e.g. for deepseek r1 everything in the <think> tag)
+        thoughts (str): The thoughts of the CoT process
+    """
     con = connect_to_db()
-    process_test_set(con)
-
-if __name__ == "__main__":
-    main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    con.begin()
+    sql = """
+        INSERT INTO predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
+        """
+    # Insert prediction into db
+    try:
+        con.execute(sql, (id, prompt_type, technique, prediction, thinking_process, thoughts))
+        con.commit()
+        con.close()
+    except ConstraintException:
+        # If the model fails to provide output out of ['favour', 'against', 'neither']
+        con.execute(sql, (id, prompt_type, technique, None, thinking_process, thoughts))
+        con.commit()
+        con.close()
