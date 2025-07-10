@@ -30,6 +30,88 @@ def get_prompt_list(cot:bool=False, few_shot:bool=False) -> list[str]:
     else:
         return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_more_context", "english_vanilla"]
     
+
+def get_test_batch(batch:pd.DataFrame, prompt_type:str) -> list[dict]:
+    """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
+
+    Args:
+        batch (pd.DataFrame): Our to be annotated data from annotated_paragraphs table
+        prompt_type (str): Corresponds to a prompt template
+
+    Returns:
+        list[dict]: Our prompt batch
+    """
+    prompt_batch = []
+    for _, row in batch.iterrows():
+        paragraph = row['inference_paragraph']
+        paragraph_id = row['id']
+        group = row['group_text']
+        prompt = get_formatted_prompt(paragraph, group, prompt_type)
+        # append formatted prompt to batch
+        helper_dict = {
+            "paragraph_id":paragraph_id,
+            "prompt_type":prompt_type,
+            "prompt":prompt
+        }
+        prompt_batch.append(helper_dict)
+
+    return prompt_batch
+
+    
+
+    
+def get_engineering_data(sample_size:int=1):
+    """ Function to extract a sample of our engineering data
+
+    Args: 
+        sample_size (int): The size of our sample
+
+    Returns:
+        None
+    """
+    con = connect_to_db()
+    sql = """
+        SELECT id, inference_paragraph, group_text 
+        FROM engineering_data 
+            JOIN annotated_paragraphs USING(id) 
+        ORDER BY RANDOM() 
+        LIMIT ?
+    """
+    data = con.execute(sql, (sample_size,)).fetchdf()
+    con.close()
+    return data
+
+def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:str, prediction:str, thinking_process:str, thoughts:str):
+    """ This function is used to insert a models prediction into our db.
+
+    Args:
+        paragraph_id (int): The id of the predicted paragraph (corresponds to an annotated paragraph)
+        model (str): The name of our model (e.g. 'gemini-2.5-pro')
+        prompt_type (str): Corresponds to a prompt template
+        technique (str): Prompting technique (e.g. 'zero-shot')
+        prediction (str): The models predicted stance (e.g. 'favour')
+        thinking_process (str): The output thinking process of reasoning models (e.g. for deepseek r1 everything in the <think> tag)
+        thoughts (str): The thoughts of the CoT process
+    """
+    con = connect_to_db()
+    con.begin()
+    sql = """
+        INSERT INTO predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
+        """
+    # Insert prediction into db
+    try:
+        con.execute(sql, (paragraph_id, model, prompt_type, technique, prediction, thinking_process, thoughts))
+        con.commit()
+        con.close()
+    except ConstraintException:
+        # If the model fails to provide output out of ['favour', 'against', 'neither']
+        con.execute(sql, (paragraph_id, model, prompt_type, technique, None, thinking_process, thoughts))
+        con.commit()
+        con.close()
+
+
 def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
     if prompt_type == "thinking_guideline":
         # Zero shot
@@ -161,83 +243,71 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
         Paragraph: {paragraph}
         Label:
         """
-
-def get_test_batch(batch:pd.DataFrame, prompt_type:str) -> list[dict]:
-    """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
-
-    Args:
-        batch (pd.DataFrame): Our to be annotated data from annotated_paragraphs table
-        prompt_type (str): Corresponds to a prompt template
-
-    Returns:
-        list[dict]: Our prompt batch
-    """
-    prompt_batch = []
-    for _, row in batch.iterrows():
-        paragraph = row['inference_paragraph']
-        paragraph_id = row['id']
-        group = row['group_text']
-        prompt = get_formatted_prompt(paragraph, group, prompt_type)
-        # append formatted prompt to batch
-        helper_dict = {
-            "paragraph_id":paragraph_id,
-            "prompt_type":prompt_type,
-            "prompt":prompt
-        }
-        prompt_batch.append(helper_dict)
-
-    return prompt_batch
-
-    
-
-    
-def get_engineering_data(sample_size:int=1):
-    """ Function to extract a sample of our engineering data
-
-    Args: 
-        sample_size (int): The size of our sample
-
-    Returns:
-        None
-    """
-    con = connect_to_db()
-    sql = """
-        SELECT id, inference_paragraph, group_text 
-        FROM engineering_data 
-            JOIN annotated_paragraphs USING(id) 
-        ORDER BY RANDOM() 
-        LIMIT ?
-    """
-    data = con.execute(sql, (sample_size,)).fetchdf()
-    con.close()
-    return data
-
-def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:str, prediction:str, thinking_process:str, thoughts:str):
-    """ This function is used to insert a models prediction into our db.
-
-    Args:
-        paragraph_id (int): The id of the predicted paragraph (corresponds to an annotated paragraph)
-        model (str): The name of our model (e.g. 'gemini-2.5-pro')
-        prompt_type (str): Corresponds to a prompt template
-        technique (str): Prompting technique (e.g. 'zero-shot')
-        prediction (str): The models predicted stance (e.g. 'favour')
-        thinking_process (str): The output thinking process of reasoning models (e.g. for deepseek r1 everything in the <think> tag)
-        thoughts (str): The thoughts of the CoT process
-    """
-    con = connect_to_db()
-    con.begin()
-    sql = """
-        INSERT INTO predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
+    elif prompt_type == 'german_more_context_cot_v1':
+        # CoT prompt
+        return f"""
+        **Rolle und Ziel:**
+        Du agierst als streng unparteiischer Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer spezifisch markierten Gruppe zu klassifizieren.
+        
+         **Definition der Kategorien:**
+            *   **`favour`**: Wähle diese Kategorie nur, wenn der Sprecher sich **eindeutig und direkt** positiv, unterstützend oder wohlwollend gegenüber der Gruppe äußert. Die positive Haltung muss unmissverständlich im Text formuliert sein.
+            *   **`against`**: Wähle diese Kategorie nur, wenn der Sprecher sich **eindeutig und direkt** negativ, kritisch oder ablehnend gegenüber der Gruppe äußert. Die negative Haltung muss unmissverständlich im Text formuliert sein.
+            *   **`neither`**: Dies ist die **Standardkategorie**. Wähle sie, wenn die Gruppe nur neutral erwähnt wird ODER wenn die Haltung des Sprechers ambivalent, unklar oder nicht eindeutig aus dem Text bestimmbar ist. Im Zweifelsfall, wenn die Kriterien für `favour` oder `against` nicht **zweifelsfrei** erfüllt sind, wähle **immer** `neither`.
+        
+        **Anweisungen für die Ausgabe:**
+        Deine Antwort muss exakt der folgenden Struktur folgen, um eine einfache maschinelle Verarbeitung zu ermöglichen.
+        1.  Beginne mit `Gedankengang:`. Beschreibe hier deine Schritt-für-Schritt-Analyse des Textes.
+        2.  Beende deine Antwort mit `Finale Haltung:` in einer neuen Zeile, gefolgt von genau einem der drei Schlüsselwörter.
+        
+        **Beispiel für die geforderte Ausgabe-Struktur:**
+        Gedankengang: Der Sprecher kritisiert die Gruppe X, indem er die Worte "Problem" und "inakzeptabel" verwendet. Dies ist eine klar negative Äußerung. Daher ist die Haltung "against".
+        Finale Haltung: against
+        
+        ---
+        
+        **Aufgabe:**
+        
+        **Textabschnitt:**
+        {paragraph}
+        
+        **Gruppe:**
+        {group}
+        
+        **Haltung:**
         """
-    # Insert prediction into db
-    try:
-        con.execute(sql, (paragraph_id, model, prompt_type, technique, prediction, thinking_process, thoughts))
-        con.commit()
-        con.close()
-    except ConstraintException:
-        # If the model fails to provide output out of ['favour', 'against', 'neither']
-        con.execute(sql, (paragraph_id, model, prompt_type, technique, None, thinking_process, thoughts))
-        con.commit()
-        con.close()
+    elif prompt_type == 'german_more_context_cot_v2':
+        # CoT prompt
+        return f"""
+            Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+            
+            **Zentrale Anweisungen für die Analyse:**
+            1.  **Nur die Haltung des Sprechers:** Beurteile ausschließlich die Haltung des **Sprechers**, nicht die von anderen Personen, die im Text zitiert oder erwähnt werden.
+            2.  **Nur der Text zählt:** Deine Entscheidung muss sich **allein auf den vorgelegten Text** stützen. Verwende kein externes Wissen über den Sprecher, seine politische Partei oder den allgemeinen Kontext.
+            3.  **Berichten ist nicht Werten:** Wenn der Sprecher lediglich eine Meinung, eine Handlung oder eine Situation der Gruppe berichtet (z.B. "Die Leistungen der Gruppe sind gesunken"), ohne eine eigene klare positive oder negative Wertung hinzuzufügen, ist die Haltung `neither`. Eine sachliche Feststellung ist keine Haltung.
+            
+            **Definition der Kategorien:**
+            *   **`favour`**: Die Haltung ist **eindeutig und direkt** positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
+            *   **`against`**: Die Haltung ist **eindeutig und direkt** negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
+            *   **`neither`**: Dies ist die **Standardkategorie im Zweifelsfall**. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen).
+
+            **Anweisungen für die Ausgabe:**
+            Deine Antwort muss exakt der folgenden Struktur folgen, um eine einfache maschinelle Verarbeitung zu ermöglichen.
+            1.  Beginne mit `Gedankengang:`. Beschreibe hier deine Schritt-für-Schritt-Analyse des Textes.
+            2.  Beende deine Antwort mit `Finale Haltung:` in einer neuen Zeile, gefolgt von genau einem der drei Schlüsselwörter.
+            
+            **Beispiel für die geforderte Ausgabe-Struktur:**
+            Gedankengang: Der Sprecher kritisiert die Gruppe X, indem er die Worte "Problem" und "inakzeptabel" verwendet. Dies ist eine klar negative Äußerung. Daher ist die Haltung "against".
+            Finale Haltung: against
+            
+            ---
+            
+            **Aufgabe:**
+            
+            **Textabschnitt:**
+            {paragraph}
+            
+            **Gruppe:**
+            {group}
+            
+            **Haltung:**
+        """

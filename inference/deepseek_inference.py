@@ -54,16 +54,16 @@ def parse_r1_response(response:str) -> tuple[str,str]:
 def deepseek_inference(prompt_batch, llm:vllm.entrypoints.llm.LLM, sampling_params) -> None:
 
     for prompt_dict in prompt_batch:
-        prompt = prompt_batch.get("prompt")
+        prompt = prompt_dict.get("prompt")
         outputs = llm.generate([prompt], sampling_params)    
         for output in outputs:
             # The 'prompt' here will be the long, formatted string with special tokens
             original_prompt_info = output.prompt
             generated_text = output.outputs[0].text
             thinking, prediction = parse_r1_response(output.outputs[0].text)
-            print(f"Thinking: {thinking}\n Answer: {answer}")
-            paragraph_id = prompt_batch.get("paragraph_id")
-            prompt_type = prompt_batch.get("prompt_type")
+            print(f"Thinking: {thinking}\n Answer: {prediction}")
+            paragraph_id = prompt_dict.get("paragraph_id")
+            prompt_type = prompt_dict.get("prompt_type")
             #insert_prediction(paragraph_id, 'DeepSeek-R1-Distill-Llama-70B', prompt_type, 'zero_shot', prediction, thinking, None)
         
 
@@ -72,11 +72,11 @@ def process_test_set(llm:vllm.entrypoints.llm.LLM, sampling_params):
     prompt_types = get_prompt_list(cot=False, few_shot=False)
     for prompt_type in prompt_types:
         prompt_batch = get_test_batch(to_be_predicted_batch, prompt_type)
-        deepseek_inference(prompt_batch, llm, sampling_params, con)
+        deepseek_inference(prompt_batch, llm, sampling_params)
 
 def main():
-    #llm, sampling_params = load_deepseek_model()
-    llm, sampling_params = None, None
+    llm, sampling_params = load_deepseek_model()
+    # llm, sampling_params = None, None
     process_test_set(llm, sampling_params)
 
 if __name__ == "__main__":
