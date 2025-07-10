@@ -49,7 +49,7 @@ def get_prompt_list(cot:bool=False, few_shot:bool=False) -> list[str]:
     if cot:
         pass
     elif few_shot:
-        return ["german_vanilla_expert",  "german_vanilla_expert_more_context"]
+        return ["german_vanilla_expert", "german_vanilla_expert_v2", "german_vanilla_expert_v3",  "german_vanilla_expert_more_context"]
     else:
         return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "german_more_context", "english_vanilla"]
     
@@ -176,6 +176,23 @@ def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:st
             {few_shot_string}
             Textabschnitt: {paragraph}
             Targel: {group}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_v2':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_v3':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Gruppe: {group}
             Label:
         """
     elif prompt_type == 'german_vanilla_expert_more_context':

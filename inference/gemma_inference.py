@@ -59,7 +59,7 @@ def gemma_cot_predictions(prompt_batch, llm:vllm.entrypoints.llm.LLM):
     response = do_gemma_inference(prompt, engineering_id, llm, sampling_params)
     pass
     
-def gemma_predictions(prompt_batch:list[dict], llm:vllm.entrypoints.llm.LLM):
+def gemma_predictions(prompt_batch:list[dict], llm:vllm.entrypoints.llm.LLM, few_shot=True, shots='1-shot'):
     """ Function for zero and few-shot predictions, since they have similarly structured output.
     """
     # Define sampling parameters. We need fewer if CoT is not needed. This speed up the model, if it generates non-sense
@@ -72,18 +72,33 @@ def gemma_predictions(prompt_batch:list[dict], llm:vllm.entrypoints.llm.LLM):
         prompt_type = prompt_dict.get("prompt_type")
         # Get gemma prediction
         prediction = do_gemma_inference(prompt, paragraph_id, llm, sampling_params)
-        print(f"Prompt: {prompt}\nPrediction: {prediction}")
-        insert_prediction(paragraph_id, 'gemma-3-27b-it', prompt_type, 'zero_shot', prediction, None, None)
+        # print(f"Prompt: {prompt}\nPrediction: {prediction}")
+        if few_shot:
+            insert_prediction(paragraph_id, 'gemma-3-27b-it', prompt_type, shots, prediction, None, None)
+        else:
+            insert_prediction(paragraph_id, 'gemma-3-27b-it', prompt_type, 'zero_shot', prediction, None, None)
     
 
 def process_test_set(llm:vllm.entrypoints.llm.LLM):
-    to_be_predicted_batch = get_engineering_data(sample_size=5)
-    prompt_types = get_prompt_list(cot=False, few_shot=True)
+    to_be_predicted_batch = get_engineering_data(sample_size=99999)
     
-    for prompt_type in prompt_types:
-        print(f"Calling api with samples and prompt: {prompt_type}...")
-        prompt_batch = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, '1-shot')
-        gemma_predictions(prompt_batch, llm)
+    prompt_types_zs = get_prompt_list(cot=False, few_shot=False)
+    
+    for prompt_type in prompt_types_zs:
+        print(f"Calling gemma models with samples and zero-shot prompt: {prompt_type}...")
+        prompt_batch_zs =  get_test_batch(to_be_predicted_batch, prompt_type)
+        gemma_predictions(prompt_batch_zs, llm)
+    
+    prompt_types_fs = get_prompt_list(cot=False, few_shot=True)
+    
+    for prompt_type in prompt_types_fs:
+        print(f"Calling gemma model with samples and few-shot prompt: {prompt_type}...")
+        prompt_batch_fs1 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
+        gemma_predictions(prompt_batch_fs1, llm, few_shot=True, shots='1-shot')
+        prompt_batch_fs5 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot')
+        gemma_predictions(prompt_batch_fs5, llm, few_shot=True, shots='5-shot')
+        prompt_batch_fs10 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot')
+        gemma_predictions(prompt_batch_fs10, llm, few_shot=True, shots='10-shot')
            
         
 
@@ -109,7 +124,7 @@ def main():
     try:
         llm = LLM(
             model=model_name,
-            tensor_parallel_size=2,  # Use 2 GPUs
+            tensor_parallel_size=1,  # Use 2 GPUs
             trust_remote_code=True
         )
     except Exception as e:
@@ -117,7 +132,7 @@ def main():
         return
 
     elapsed_time = (time.time() - start_time) / 60
-    print(f"--- LLM setup complete in {elapsed_time:.2f} min. Ready for prompts. ---")
+    print(f"--- LLM setup complete in {elapsed_time:.2f} min. ---")
     process_test_set(llm)
 
 
