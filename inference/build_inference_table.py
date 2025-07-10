@@ -36,7 +36,7 @@ def create_inference_table(con:db.DuckDBPyConnection, reset_predictions:bool=Fal
             model VARCHAR NOT NULL,
             run VARCHAR,
             technique VARCHAR NOT NULL, --e.g. 0-shot, k-shot, CoT, etc.
-            prediction VARCHAR(8) NOT NULL CHECK (prediction IN ('favour', 'against', 'neither')),
+            prediction VARCHAR(8) CHECK (prediction IN ('favour', 'against', 'neither')),
             thoughts VARCHAR, -- direct output from an api or <think><\\think} from a reasoning model
             thinking_process VARCHAR, -- thinking in the output for CoT prompting
             PRIMARY KEY(id, model, run, technique)
