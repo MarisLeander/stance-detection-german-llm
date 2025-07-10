@@ -103,11 +103,11 @@ def parse_gemini_response(response:dict) -> tuple[str,str]:
             prediction += part.text
     return thoughts, prediction
 
-def gemmini_predictions(prompt_batch:list[dict], client:genai.Client):
+def gemini_predictions(prompt_batch:list[dict], client:genai.Client):
     """ Function for zero and few-shot predictions, since they have similarly structured output.
     """
     
-    for prompt_dict in prompt_batch:
+    for prompt_dict in tqdm(prompt_batch, desc="Processing paragraphs..."):
         # Get prompt information
         prompt = prompt_dict.get("prompt")
         paragraph_id = prompt_dict.get("paragraph_id")
@@ -123,7 +123,8 @@ def process_test_set():
     client = get_client()
     to_be_predicted_batch = get_engineering_data(sample_size=1)
     prompt_types = get_prompt_list(cot=False, few_shot=False)
-    for prompt_type in tqdm(prompt_types, desc=f"Calling api with samples and prompt: {prompt_type}"):
+    for prompt_type in prompt_types:
+        print(f"Calling api with samples and prompt: {prompt_type}...")
         prompt_batch = get_test_batch(to_be_predicted_batch, prompt_type)
         gemini_predictions(prompt_batch, client)
     

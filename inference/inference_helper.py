@@ -1,6 +1,7 @@
 import duckdb as db
 import pandas as pd
 from pathlib import Path
+from duckdb import ConstraintException
 
 def connect_to_db() -> db.DuckDBPyConnection:
     """
@@ -107,6 +108,8 @@ def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:st
         con.close()
     except ConstraintException:
         # If the model fails to provide output out of ['favour', 'against', 'neither']
+        con.rollback()
+        con.begin()
         con.execute(sql, (paragraph_id, model, prompt_type, technique, None, thinking_process, thoughts))
         con.commit()
         con.close()

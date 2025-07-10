@@ -4,7 +4,6 @@ import time
 import json
 import vllm
 import contextlib
-from tqdm import tqdm
 from pathlib import Path
 from vllm import LLM, SamplingParams
 from inference_helper import get_formatted_prompt, get_prompt_list, get_engineering_data, insert_prediction, get_test_batch
@@ -43,8 +42,7 @@ def run_silently(func, *args, **kwargs):
     
     return result
     
-def do_gemma_inference(prompt:str, input_data, llm:vllm.entrypoints.llm.LLM, sampling_params) -> str:
-    print(type(sampling_params))
+def do_gemma_inference(prompt:str, input_data, llm:vllm.entrypoints.llm.LLM, sampling_params:vllm.sampling_params.SamplingParams) -> str:
     # Generate the response
     responses = run_silently(llm.generate, [prompt], sampling_params)
     # Print the output
@@ -79,10 +77,11 @@ def gemma_predictions(prompt_batch:list[dict], llm:vllm.entrypoints.llm.LLM):
     
 
 def process_test_set(llm:vllm.entrypoints.llm.LLM):
-    to_be_predicted_batch = get_engineering_data(sample_size=1)
+    to_be_predicted_batch = get_engineering_data(sample_size=9999)
     prompt_types = get_prompt_list(cot=False, few_shot=False)
     
-    for prompt_type in tqdm(prompt_types, desc=f"Calling api with samples and prompt: {prompt_type}"):
+    for prompt_type in prompt_types:
+        print(f"Calling api with samples and prompt: {prompt_type}...")
         prompt_batch = get_test_batch(to_be_predicted_batch, prompt_type)
         gemma_predictions(prompt_batch, llm)
            

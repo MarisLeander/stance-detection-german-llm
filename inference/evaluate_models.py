@@ -180,15 +180,27 @@ def calculate_macro_f1(predictions_df:pd.DataFrame, con:db.DuckDBPyConnection):
     loose_macro_f1 = macro_f1_formula(loose_f1_per_class)
     print(f"Loose macro f1 = {loose_macro_f1}")
 
+def calculate_failure_rate(model:str, technique:str, prompt_type:str, con:db.DuckDBPyConnection):
+    total_preds_sql = "SELECT COUNT (DISTINCT id) FROM predictions WHERE model = ? AND technique = ? AND prompt_type = ?;"
+    total_preds = con.execute(total_preds_sql, (model, technique, prompt_type)).fetchone()[0]
+    null_preds_sql = "SELECT COUNT (DISTINCT id) FROM predictions WHERE model = ? AND technique = ? AND prompt_type = ? AND prediction IS NULL;"
+    null_preds = con.execute(null_preds_sql, (model, technique, prompt_type)).fetchone()[0]
+    failure_rate = round(((null_preds / total_preds) * 100), 2)
+    print(f"Failure rate: {null_preds}/{total_preds} -> {failure_rate}%")
+    
+
 def evaluate_predictions(con:db.DuckDBPyConnection):
     models = con.execute("SELECT DISTINCT model FROM predictions;").fetchall() 
-    technique = con.execute("SELECT DISTINCT technique FROM predictions;").fetchall()
+    techniques = con.execute("SELECT DISTINCT technique FROM predictions;").fetchall()
     for model in models:
-        for technique in technique: 
-            runs = con.execute("SELECT DISTINCT run FROM predictions WHERE model = ? AND technique = ?", (model[0], technique[0])).fetchall()
-            for run in runs:
-                print(f"Model: {model[0]} | Technique: {technique[0]} | Run: {run[0]}")
-                predictions_df = con.execute("SELECT id, prediction FROM predictions WHERE model = ? AND technique = ? AND run = ?;", (model[0], technique[0], run[0])).df()
+        print(f"Evaluating {model}")
+        for technique in techniques: 
+            prompt_types = con.execute("SELECT DISTINCT prompt_type FROM predictions WHERE model = ? AND technique = ?;", (model[0], technique[0])).fetchall()
+            for prompt_type in prompt_types:
+                print(f"Model: {model[0]} | Technique: {technique[0]} | prompt_type: {prompt_type}")
+                pred_sql = "SELECT id, prediction FROM predictions WHERE model = ? AND technique = ? AND prompt_type = ?;"
+                predictions_df = con.execute(pred_sql, (model[0], technique[0], prompt_type[0])).fetchdf()
+                calculate_failure_rate(model[0], technique[0], prompt_type[0], con)
                 calculate_macro_f1(predictions_df, con)
                 
 
@@ -196,6 +208,7 @@ def evaluate_predictions(con:db.DuckDBPyConnection):
 def main():
     con = connect_to_db()
     evaluate_predictions(con)
+    con.close()
 
 
 
