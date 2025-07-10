@@ -59,7 +59,7 @@ def gemma_cot_predictions(prompt_batch, llm:vllm.entrypoints.llm.LLM):
     response = do_gemma_inference(prompt, engineering_id, llm, sampling_params)
     pass
     
-def gemma_predictions(prompt_batch:list[dict], llm:vllm.entrypoints.llm.LLM, few_shot=True, shots='1-shot'):
+def gemma_predictions(prompt_batch:list[dict], llm:vllm.entrypoints.llm.LLM, few_shot=False, shots=None):
     """ Function for zero and few-shot predictions, since they have similarly structured output.
     """
     # Define sampling parameters. We need fewer if CoT is not needed. This speed up the model, if it generates non-sense
@@ -93,10 +93,13 @@ def process_test_set(llm:vllm.entrypoints.llm.LLM):
     
     for prompt_type in prompt_types_fs:
         print(f"Calling gemma model with samples and few-shot prompt: {prompt_type}...")
+        print("Processing 1-shot prompts...")
         prompt_batch_fs1 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
         gemma_predictions(prompt_batch_fs1, llm, few_shot=True, shots='1-shot')
+        print("Processing 5-shot prompts...")
         prompt_batch_fs5 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot')
         gemma_predictions(prompt_batch_fs5, llm, few_shot=True, shots='5-shot')
+        print("Processing 10-shot prompts...")
         prompt_batch_fs10 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot')
         gemma_predictions(prompt_batch_fs10, llm, few_shot=True, shots='10-shot')
            
