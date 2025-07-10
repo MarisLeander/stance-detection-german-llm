@@ -6,7 +6,7 @@ import re
 from vllm import LLM, SamplingParams
 from tqdm import tqdm
 from pathlib import Path
-from inference_helper import get_formatted_prompt, get_prompt_list
+from inference_helper import get_formatted_prompt, get_prompt_list, get_engineering_data, insert_prediction, get_test_batch
 
 def connect_to_db() -> db.DuckDBPyConnection:
     """
@@ -54,45 +54,45 @@ def parse_r1_response(response:str) -> tuple[str,str]:
     # re.DOTALL makes the '.' character match newlines as well
     pattern = re.compile(r"<think>(.*?)</think>\s*<answer>(.*?)</answer>", re.DOTALL)
     
-    match = pattern.search(response_text)
+    match = pattern.search(response)
     
     if match:
         # group(1) is the content from the first (.*?)
         # group(2) is the content from the second (.*?)
         thinking = match.group(1).strip()
-        answer = match.group(2).strip()
-        return thinking, answer
+        prediction = match.group(2).strip()
+        return thinking, prediction
     else:
         return None, None
 
 
-def deepseek_inference(paragraph:str, group:str, engineering_id:int, prompt_type:str, llm:vllm.entrypoints.llm.LLM, sampling_params, con:db.DuckDBPyConnection) -> None:
-    prompt = get_formatted_prompt(paragraph, group, prompt_type)
-    
-    outputs = llm.generate([prompt], sampling_params)
+def deepseek_inference(prompt_batch, llm:vllm.entrypoints.llm.LLM, sampling_params, con:db.DuckDBPyConnection) -> None:
 
-    for output in outputs:
-        # The 'prompt' here will be the long, formatted string with special tokens
-        original_prompt_info = output.prompt
-        generated_text = output.outputs[0].text
-        thinking, answer = parse_r1_response(output.outputs[0].text)
-        print(f"Thinking: {thinking}\n Answer: {answer}")
+    for prompt_dict in prompt_batch:
+        prompt = prompt_batch.get("prompt")
+        outputs = llm.generate([prompt], sampling_params)    
+        for output in outputs:
+            # The 'prompt' here will be the long, formatted string with special tokens
+            original_prompt_info = output.prompt
+            generated_text = output.outputs[0].text
+            thinking, prediction = parse_r1_response(output.outputs[0].text)
+            print(f"Thinking: {thinking}\n Answer: {answer}")
+            paragraph_id = prompt_batch.get("paragraph_id")
+            prompt_type = prompt_batch.get("prompt_type")
+            #insert_prediction(paragraph_id, 'DeepSeek-R1-Distill-Llama-70B', prompt_type, 'zero_shot', prediction, thinking, None)
         
 
 def process_test_set(con:db.DuckDBPyConnection, llm:vllm.entrypoints.llm.LLM, sampling_params):
-    test_set = con.execute("SELECT * FROM engineering_data JOIN annotated_paragraphs USING(id)").fetchdf()
+    to_be_predicted_batch = get_engineering_data(sample_size=1)
     prompt_types = get_prompt_list(cot=False, few_shot=False)
     for prompt_type in prompt_types:
-        for _,row in tqdm(test_set.iterrows(), total=len(test_set), desc=f"Doing inference on DeepSeek-R1-Distill-Llama-70B and prompt: {prompt_type}"):
-            paragraph = row['inference_paragraph']
-            engineering_id = row['id']
-            group = row['group_text']
-
-            deepseek_inference(paragraph, group, engineering_id, prompt_type, llm, sampling_params, con)
+        prompt_batch = get_test_batch(to_be_predicted_batch, prompt_type)
+        deepseek_inference(prompt_batch, llm, sampling_params, con)
 
 def main():
     con = connect_to_db()
-    llm, sampling_params = load_deepseek_model()
+    #llm, sampling_params = load_deepseek_model()
+    llm, sampling_params = None, None
     process_test_set(con, llm, sampling_params)
 
 if __name__ == "__main__":

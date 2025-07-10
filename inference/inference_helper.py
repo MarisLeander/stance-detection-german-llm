@@ -1,5 +1,6 @@
 import duckdb as db
 import pandas as pd
+from pathlib import Path
 
 def connect_to_db() -> db.DuckDBPyConnection:
     """
@@ -161,8 +162,45 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
         Label:
         """
 
-def get_test_batch(batch:pd.DataFrame, prompt_type:str)
-def get_test_data(sample_size:int=1)
+def get_test_batch(batch:pd.DataFrame, prompt_type:str) -> list[dict]:
+    """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
+
+    Args:
+        batch (pd.DataFrame): Our to be annotated data from annotated_paragraphs table
+        prompt_type (str): Corresponds to a prompt template
+
+    Returns:
+        list[dict]: Our prompt batch
+    """
+    prompt_batch = []
+    for _, row in batch.iterrows():
+        paragraph = row['inference_paragraph']
+        paragraph_id = row['id']
+        group = row['group_text']
+        prompt = get_formatted_prompt(paragraph, group, prompt_type)
+        # append formatted prompt to batch
+        helper_dict = {
+            "paragraph_id":paragraph_id,
+            "prompt_type":prompt_type,
+            "prompt":prompt
+        }
+        prompt_batch.append(helper_dict)
+
+    return prompt_batch
+
+    
+
+    
+def get_engineering_data(sample_size:int=1):
+    """ Function to extract a sample of our engineering data
+
+    Args: 
+        sample_size (int): The size of our sample
+
+    Returns:
+        None
+    """
+    con = connect_to_db()
     sql = """
         SELECT id, inference_paragraph, group_text 
         FROM engineering_data 
@@ -170,20 +208,15 @@ def get_test_data(sample_size:int=1)
         ORDER BY RANDOM() 
         LIMIT ?
     """
-    test_set = con.execute(sql, (sample_size,)).fetchdf()
-    prompt_types = ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla_expert", "german_more_context", "english_vanilla"]
-    for prompt_type in prompt_types:
-        for _,row in tqdm(test_set.iterrows(), total=len(test_set), desc=f"Calling api with samples and prompt: {prompt_type}"):
-            paragraph = row['inference_paragraph']
-            engineering_id = row['id']
-            group = row['group_text']
-            agreed_label = row['agreed_label']
+    data = con.execute(sql, (sample_size,)).fetchdf()
+    con.close()
+    return data
 
-def insert_prediction(id:int, model:str, prompt_type:str, technique:str, prediction:str, thinking_process:str, thoughts:str):
+def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:str, prediction:str, thinking_process:str, thoughts:str):
     """ This function is used to insert a models prediction into our db.
 
     Args:
-        id (int): The id of the predicted paragraph (corresponds to an annotated paragraph)
+        paragraph_id (int): The id of the predicted paragraph (corresponds to an annotated paragraph)
         model (str): The name of our model (e.g. 'gemini-2.5-pro')
         prompt_type (str): Corresponds to a prompt template
         technique (str): Prompting technique (e.g. 'zero-shot')
@@ -200,11 +233,11 @@ def insert_prediction(id:int, model:str, prompt_type:str, technique:str, predict
         """
     # Insert prediction into db
     try:
-        con.execute(sql, (id, prompt_type, technique, prediction, thinking_process, thoughts))
+        con.execute(sql, (paragraph_id, model, prompt_type, technique, prediction, thinking_process, thoughts))
         con.commit()
         con.close()
     except ConstraintException:
         # If the model fails to provide output out of ['favour', 'against', 'neither']
-        con.execute(sql, (id, prompt_type, technique, None, thinking_process, thoughts))
+        con.execute(sql, (paragraph_id, model, prompt_type, technique, None, thinking_process, thoughts))
         con.commit()
         con.close()
