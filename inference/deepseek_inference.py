@@ -1,4 +1,3 @@
-import duckdb as db
 import time
 import vllm
 import pandas as pd
@@ -7,20 +6,6 @@ from vllm import LLM, SamplingParams
 from tqdm import tqdm
 from pathlib import Path
 from inference_helper import get_formatted_prompt, get_prompt_list, get_engineering_data, insert_prediction, get_test_batch
-
-def connect_to_db() -> db.DuckDBPyConnection:
-    """
-    Connect to a DuckDB database.
-
-    Args:
-        db_path (str): The path to the DuckDB database file.
-
-    Returns:
-        duckdb.DuckDBPyConnection: A connection object to the DuckDB database.
-    """
-    home_dir = Path.home()
-    db_path = home_dir / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
-    return db.connect(database=db_path, read_only=False)
 
 def load_deepseek_model() -> tuple[vllm.entrypoints.llm.LLM, str]:
     start_time = time.time()
@@ -66,7 +51,7 @@ def parse_r1_response(response:str) -> tuple[str,str]:
         return None, None
 
 
-def deepseek_inference(prompt_batch, llm:vllm.entrypoints.llm.LLM, sampling_params, con:db.DuckDBPyConnection) -> None:
+def deepseek_inference(prompt_batch, llm:vllm.entrypoints.llm.LLM, sampling_params) -> None:
 
     for prompt_dict in prompt_batch:
         prompt = prompt_batch.get("prompt")
@@ -82,7 +67,7 @@ def deepseek_inference(prompt_batch, llm:vllm.entrypoints.llm.LLM, sampling_para
             #insert_prediction(paragraph_id, 'DeepSeek-R1-Distill-Llama-70B', prompt_type, 'zero_shot', prediction, thinking, None)
         
 
-def process_test_set(con:db.DuckDBPyConnection, llm:vllm.entrypoints.llm.LLM, sampling_params):
+def process_test_set(llm:vllm.entrypoints.llm.LLM, sampling_params):
     to_be_predicted_batch = get_engineering_data(sample_size=1)
     prompt_types = get_prompt_list(cot=False, few_shot=False)
     for prompt_type in prompt_types:
@@ -90,10 +75,9 @@ def process_test_set(con:db.DuckDBPyConnection, llm:vllm.entrypoints.llm.LLM, sa
         deepseek_inference(prompt_batch, llm, sampling_params, con)
 
 def main():
-    con = connect_to_db()
     #llm, sampling_params = load_deepseek_model()
     llm, sampling_params = None, None
-    process_test_set(con, llm, sampling_params)
+    process_test_set(llm, sampling_params)
 
 if __name__ == "__main__":
     main()
