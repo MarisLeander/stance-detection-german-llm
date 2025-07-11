@@ -49,9 +49,9 @@ def get_prompt_list(cot:bool=False, few_shot:bool=False) -> list[str]:
     if cot:
         return ["german_vanilla_expert_more_context_cot", "german_vanilla_expert_cot"]
     elif few_shot:
-        return ["german_vanilla_expert", "german_vanilla_expert_Textabschnitt" ,"german_vanilla_expert_v2", "german_vanilla_expert_v3",  "german_vanilla_expert_more_context", "german_vanilla_expert_more_context_Textabschnitt"]
+        return ["german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context"]
     else:
-        return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_vanilla_expert_Textabschnitt","german_vanilla_expert_more_context", "german_vanilla_expert_more_context_Textabschnitt", "german_more_context", "english_vanilla"]
+        return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "german_more_context", "english_vanilla"]
     
 def get_system_prompt(group:str, expert:bool=True, more_context:bool=True) -> str:
     if expert and more_context:
@@ -75,9 +75,45 @@ def get_system_prompt(group:str, expert:bool=True, more_context:bool=True) -> st
             - `neither`: Dies ist die Standardkategorie im Zweifelsfall. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen)."""
     else: 
         return f"""Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück."""
-    
 
-def get_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None, expert=True, more_context=True) -> list[dict]:
+def get_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None) -> list[dict]:
+    """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
+
+    Args:
+        batch (pd.DataFrame): Our to be annotated data from annotated_paragraphs table
+        prompt_type (str): Corresponds to a prompt template
+        few_shot (boo): Whether its a few_shot prompt or not
+        shots (str): how many shots (e.g. 1,5 or 10)
+
+    Returns:
+        list[dict]: Our prompt batch
+    """
+    prompt_batch = []
+    for _, row in batch.iterrows():
+        paragraph = row['inference_paragraph']
+        paragraph_id = row['id']
+        group = row['group_text']
+        prompt = get_formatted_prompt(paragraph, group, prompt_type)
+        promp = ""
+        if few_shot:
+            if shots is None:
+                raise ValueError('Number of shots have to be specified!')
+            else:
+                prompt = get_formatted_few_shot_prompt(paragraph_id, shots, paragraph, group, prompt_type)
+        else:
+            prompt = get_formatted_prompt(paragraph, group, prompt_type)
+        # append formatted prompt to batch
+        helper_dict = {
+            "paragraph_id":paragraph_id,
+            "prompt_type":prompt_type,
+            "prompt":prompt
+        }
+        prompt_batch.append(helper_dict)
+
+    return prompt_batch
+
+
+def get_split_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None, expert=True, more_context=True) -> list[dict]:
     """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
 
     Args:
@@ -210,13 +246,13 @@ def insert_batch(records:list[dict]):
         records (list): the values, to be inserted into db
     """
     con = connect_to_db()
-    con.begin()
     sql = """
         INSERT INTO predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
         """
     for record in records:
+        con.begin()
         # Unpack the values from the dictionary for the current record
         paragraph_id = record.get("id")
         model = record.get("model")
@@ -229,7 +265,6 @@ def insert_batch(records:list[dict]):
         try:
             con.execute(sql, (paragraph_id, model, prompt_type, technique, prediction, thinking_process, thoughts))
             con.commit()
-            con.close()
         except ConstraintException:
             # If the model fails to provide output out of ['favour', 'against', 'neither']
             con.rollback()
@@ -327,15 +362,6 @@ def get_formatted_cot_prompt(paragraph:str, group:str, prompt_type:str) -> str:
 def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:str, group:str, prompt_type:str) -> str:
     few_shot_string = build_few_shot_examples(test_paragraph_id, shots)
     if prompt_type == 'german_vanilla_expert':
-        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
-        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
-
-            {few_shot_string}
-            Textabschnitt: {paragraph}
-            Targel: {group}
-            Label:
-        """
-    elif prompt_type == 'german_vanilla_expert_Textabschnitt':
         return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
         Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
 
@@ -344,25 +370,15 @@ def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:st
             Targel: {group}
             Label:
         """
-    elif prompt_type == 'german_vanilla_expert_v2':
-        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
-        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+    elif prompt_type == 'german_vanilla':
+        return f"""Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
 
             {few_shot_string}
             Textabschnitt: {paragraph}
             Label:
         """
-    elif prompt_type == 'german_vanilla_expert_v3':
-        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
-        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
-
-            {few_shot_string}
-            Textabschnitt: {paragraph}
-            Gruppe: {group}
-            Label:
-        """
-    elif prompt_type == 'german_vanilla_expert_more_context_Textabschnitt':
-        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+    elif prompt_type == 'german_vanilla_expert_more_context':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
         Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
 
             Definition der Kategorien:
@@ -463,13 +479,6 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
             Label:
         """
     elif prompt_type == 'german_vanilla_expert':
-        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
-        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
-            
-            Textabschnitt: {paragraph}
-            Label:
-        """
-    elif prompt_type == 'german_vanilla_expert_Textabschnitt':
         return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
         Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
             
@@ -477,18 +486,6 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
             Label:
         """
     elif prompt_type == 'german_vanilla_expert_more_context':
-        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
-        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
-
-            Definition der Kategorien:
-            -`favour`: Die Haltung ist eindeutig und direkt positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
-            - `against`: Die Haltung ist eindeutig und direkt negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
-            - `neither`: Dies ist die Standardkategorie im Zweifelsfall. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen).
-            
-            Textabschnitt: {paragraph}
-            Label:
-        """
-    elif prompt_type == 'german_vanilla_expert_more_context_Textabschnitt':
         return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
         Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
 
@@ -540,74 +537,6 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
 
         Paragraph: {paragraph}
         Label:
-        """
-    elif prompt_type == 'german_more_context_cot_v1':
-        # CoT prompt
-        return f"""
-        **Rolle und Ziel:**
-        Du agierst als streng unparteiischer Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer spezifisch markierten Gruppe zu klassifizieren.
-        
-         **Definition der Kategorien:**
-            *   **`favour`**: Wähle diese Kategorie nur, wenn der Sprecher sich **eindeutig und direkt** positiv, unterstützend oder wohlwollend gegenüber der Gruppe äußert. Die positive Haltung muss unmissverständlich im Text formuliert sein.
-            *   **`against`**: Wähle diese Kategorie nur, wenn der Sprecher sich **eindeutig und direkt** negativ, kritisch oder ablehnend gegenüber der Gruppe äußert. Die negative Haltung muss unmissverständlich im Text formuliert sein.
-            *   **`neither`**: Dies ist die **Standardkategorie**. Wähle sie, wenn die Gruppe nur neutral erwähnt wird ODER wenn die Haltung des Sprechers ambivalent, unklar oder nicht eindeutig aus dem Text bestimmbar ist. Im Zweifelsfall, wenn die Kriterien für `favour` oder `against` nicht **zweifelsfrei** erfüllt sind, wähle **immer** `neither`.
-        
-        **Anweisungen für die Ausgabe:**
-        Deine Antwort muss exakt der folgenden Struktur folgen, um eine einfache maschinelle Verarbeitung zu ermöglichen.
-        1.  Beginne mit `Gedankengang:`. Beschreibe hier deine Schritt-für-Schritt-Analyse des Textes.
-        2.  Beende deine Antwort mit `Finale Haltung:` in einer neuen Zeile, gefolgt von genau einem der drei Schlüsselwörter.
-        
-        **Beispiel für die geforderte Ausgabe-Struktur:**
-        Gedankengang: Der Sprecher kritisiert die Gruppe X, indem er die Worte "Problem" und "inakzeptabel" verwendet. Dies ist eine klar negative Äußerung. Daher ist die Haltung "against".
-        Finale Haltung: against
-        
-        ---
-        
-        **Aufgabe:**
-        
-        **Textabschnitt:**
-        {paragraph}
-        
-        **Gruppe:**
-        {group}
-        
-        **Haltung:**
-        """
-    elif prompt_type == 'german_more_context_cot_v2':
-        # CoT prompt
-        return f"""
-            Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
-            
-            **Zentrale Anweisungen für die Analyse:**
-            1.  **Nur die Haltung des Sprechers:** Beurteile ausschließlich die Haltung des **Sprechers**, nicht die von anderen Personen, die im Text zitiert oder erwähnt werden.
-            2.  **Nur der Text zählt:** Deine Entscheidung muss sich **allein auf den vorgelegten Text** stützen. Verwende kein externes Wissen über den Sprecher, seine politische Partei oder den allgemeinen Kontext.
-            3.  **Berichten ist nicht Werten:** Wenn der Sprecher lediglich eine Meinung, eine Handlung oder eine Situation der Gruppe berichtet (z.B. "Die Leistungen der Gruppe sind gesunken"), ohne eine eigene klare positive oder negative Wertung hinzuzufügen, ist die Haltung `neither`. Eine sachliche Feststellung ist keine Haltung.
-            
-            **Definition der Kategorien:**
-            *   **`favour`**: Die Haltung ist **eindeutig und direkt** positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
-            *   **`against`**: Die Haltung ist **eindeutig und direkt** negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
-            *   **`neither`**: Dies ist die **Standardkategorie im Zweifelsfall**. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen).
-
-            **Anweisungen für die Ausgabe:**
-            Deine Antwort muss exakt der folgenden Struktur folgen, um eine einfache maschinelle Verarbeitung zu ermöglichen.
-            1.  Beginne mit `Gedankengang:`. Beschreibe hier deine Schritt-für-Schritt-Analyse des Textes.
-            2.  Beende deine Antwort mit `Finale Haltung:` in einer neuen Zeile, gefolgt von genau einem der drei Schlüsselwörter.
-            
-            **Beispiel für die geforderte Ausgabe-Struktur:**
-            Gedankengang: Der Sprecher kritisiert die Gruppe X, indem er die Worte "Problem" und "inakzeptabel" verwendet. Dies ist eine klar negative Äußerung. Daher ist die Haltung "against".
-            Finale Haltung: against
-            
-            ---
-            
-            **Aufgabe:**
-            
-            **Textabschnitt:**
-            {paragraph}
-            
-            **Gruppe:**
-            {group}
-            
-            **Haltung:**
         """
 
 if __name__ == "__main__":

@@ -16,6 +16,41 @@ def connect_to_db() -> db.DuckDBPyConnection:
     db_path = home_dir / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
     return db.connect(database=db_path, read_only=False)
 
+def create_evaluation_table(reset_db:bool=True, con:db.DuckDBPyConnection):
+    con.begin()
+    if reset_db:
+        on.execute("DROP TABLE IF EXISTS label_f1;")
+        con.execute("DROP TABLE IF EXISTS model_evaluation;")
+        con.execute("DROP SEQUENCE IF EXISTS config_id_seq;")
+        
+    # Create a sequence for config IDs to ensure unique IDs for each config. It's like an auto-incrementing primary key.
+    con.execute("CREATE SEQUENCE IF NOT EXISTS config_id_seq START 1;")
+    
+    create_overall_table_sql = """
+        CREATE TABLE IF NOT EXISTS model_evaluation (
+            config_id INTEGER DEFAULT nextval('config_id_seq') PRIMARY KEY,
+            model VARCHAR NOT NULL REFERENCES predictions(model),
+            prompt_type VARCHAR NOT NULL REFERENCES predictions(prompt_type),
+            technique VARCHAR NOT NULL REFERENCES predictions(technique), --e.g. 0-shot, k-shot, CoT, etc.
+            failure_rate FLOAT NOT NULL,
+            loose_macro_f1 FLOAT NOT NULL,
+            strict_macro_f1 FLOAT NOT NULL,
+            UNIQUE (model, prompt_type, technique)
+        );
+    """
+    create_label_table_sql = """
+        CREATE TABLE IF NOT EXISTS label_f1 (
+            config_id INTEGER NOT NULL REFERENCES model_evaluation(config_id),
+            label VARCHAR(8) NOT NULL CHECK (label IN ('favour', 'against', 'neither')),
+            loose_f1 FLOAT NOT NULL,
+            strict_f1 FLOAT NOT NULL,
+            PRIMARY KEY(config_id, label)
+        );
+    """
+    con.execute(create_overall_table_sql)
+    con.execute(create_label_table_sql)
+    con.commit()
+    
 def calculate_f1(tp:int, fp:int, tn:int, fn:int) -> int:
     """
     Calculates precision, recall, and F1 score from TP, FP, TN, and FN,
@@ -68,12 +103,11 @@ def calculate_strict_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyC
     fp = con.execute(f"SELECT count(*) FROM annotated_paragraphs WHERE id IN ? AND agreed_label <> ?", (tuple(label_pred_ids), label)).fetchone()[0]
     tn = con.execute(f"SELECT count(*) FROM annotated_paragraphs WHERE id IN ? AND agreed_label <> ?", (tuple(neg_label_pred_ids), label)).fetchone()[0]
     fn = con.execute(f"SELECT count(*) FROM annotated_paragraphs WHERE id IN ? AND agreed_label = ?", (tuple(neg_label_pred_ids), label)).fetchone()[0]
-    print(f"TP: {tp}")
-    print(f"FP: {fp}")
-    print(f"TN: {tn}")
-    print(f"FN: {fn}")
+    # print(f"TP: {tp}")
+    # print(f"FP: {fp}")
+    # print(f"TN: {tn}")
+    # print(f"FN: {fn}")
     f1_score = calculate_f1(tp, fp, tn, fn)
-    print(f"F1-score: {f1_score}")
     return f1_score
 
 def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyConnection) -> int:
@@ -150,28 +184,58 @@ def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyCo
             AND (harriet_stance = ? OR maris_stance = ?);
     """
     fn = con.execute(fn_sql, (tuple(neg_label_pred_ids), label, label)).fetchone()[0]
-    print(f"TP: {tp}")
-    print(f"FP: {fp}")
-    print(f"TN: {tn}")
-    print(f"FN: {fn}")
+    # print(f"TP: {tp}")
+    # print(f"FP: {fp}")
+    # print(f"TN: {tn}")
+    # print(f"FN: {fn}")
     f1_score = calculate_f1(tp, fp, tn, fn)
-    print(f"F1-score: {f1_score}")
     # Drop our view
     con.execute("DROP VIEW LabelersAnnotations;")
     return f1_score
 
-def calculate_macro_f1(predictions_df:pd.DataFrame, con:db.DuckDBPyConnection):
+def insert_label_f1(
+    predictions_df:pd.DataFrame, 
+    con:db.DuckDBPyConnection,
+    label:str, 
+    strict_f1_score:float, 
+    loose_f1_score:float
+):
+    model = predictions_df.loc[0, 'model']
+    prompt_type = predictions_df.loc[0, 'prompt_type']
+    technique = predictions_df.loc[0, 'technique']
+    sql = "SELECT config_id FROM model_evaluation WHERE model = ? AND prompt_type = ? AND technique = ?"
+    config_id = con.execute(sql, (model, prompt_type, technique))
+    insert_sql = "INSERT INTO label_f1 (config_id, label, loose_f1, strict_f1) VALUES (?, ?, ?, ?)"
+    con.begin()
+    con.execute(insert_sql, (config_id, label, strict_f1_score, loose_f1_score))
+    con.commit()
+
+def insert_macro_f1(
+    predictions_df:pd.DataFrame,
+    con:db.DuckDBPyConnection,
+    failure_rate:float,
+    strict_macro_f1:float,
+    loose_macro_f1:float
+):
+    model = predictions_df.loc[0, 'model']
+    prompt_type = predictions_df.loc[0, 'prompt_type']
+    technique = predictions_df.loc[0, 'technique
+    con.begin()
+    insert_sql = "INSERT INTO model_evaluation (model, prompt_type, technique, failure_rate, loose_macro_f1, strict_macro_f1) VALUES (?, ?, ?, ?, ?, ?);"
+    con.execute(insert_sql, (model, prompt_type, technique, failure_rate, loose_macro_f1, strict_macro_f1))
+    con.commit()
+    
+    
+def calculate_macro_f1(predictions_df:pd.DataFrame, failure_rate:int, con:db.DuckDBPyConnection):
     labels = ['favour', 'against', 'neither']
     strict_f1_per_class = []
     loose_f1_per_class = []
     for label in labels:
         print(f"\nLabel: {label}")
         # For the strict f1 score the model has to predict the agreed on label, which is neither if the annotators labelled different labels.
-        print("Calculating strict f1-score")
         strict_f1_score = calculate_strict_f1(predictions_df, label, con)
         strict_f1_per_class.append((label, strict_f1_score))
         # For the loose f1 score, the model has only to predict one of the labels each annotator labelled.
-        print("\nCalculating loose f1-score")
         loose_f1_score = calculate_loose_f1(predictions_df, label, con)
         loose_f1_per_class.append((label, loose_f1_score))
 
@@ -179,6 +243,18 @@ def calculate_macro_f1(predictions_df:pd.DataFrame, con:db.DuckDBPyConnection):
     print(f"Strict macro f1 = {strict_macro_f1}")
     loose_macro_f1 = macro_f1_formula(loose_f1_per_class)
     print(f"Loose macro f1 = {loose_macro_f1}")
+
+    insert_macro_f1(predictions_df, con, failure_rate, strict_macro_f1, loose_macro_f1)
+    
+    for i in range (0, 3):
+        label_s, strict_f1_score = strict_f1_per_class[i]
+        label_l, loose_f1_score = loose_f1_per_class[i]
+        if label_l != label_s:
+            raise ValueError('Labels are not the same!')
+        else:
+            insert_label_f1(predictions_df, con, label_s, strict_f1_score, loose_f1_score)
+
+    
 
 def calculate_failure_rate(model:str, technique:str, prompt_type:str, con:db.DuckDBPyConnection):
     """ Calculates in how many cases the model failed to provide a correct formatted output
@@ -194,22 +270,20 @@ def calculate_failure_rate(model:str, technique:str, prompt_type:str, con:db.Duc
     null_preds_sql = "SELECT COUNT (DISTINCT id) FROM predictions WHERE model = ? AND technique = ? AND prompt_type = ? AND prediction IS NULL;"
     null_preds = con.execute(null_preds_sql, (model, technique, prompt_type)).fetchone()[0]
     failure_rate = round(((null_preds / total_preds) * 100), 2)
-    print(f"Failure rate: {null_preds}/{total_preds} -> {failure_rate}%")
     
 
 def evaluate_predictions(con:db.DuckDBPyConnection):
     models = con.execute("SELECT DISTINCT model FROM predictions;").fetchall() 
     techniques = con.execute("SELECT DISTINCT technique FROM predictions;").fetchall()
     for model in models:
-        print(f"Evaluating {model}")
         for technique in techniques: 
             prompt_types = con.execute("SELECT DISTINCT prompt_type FROM predictions WHERE model = ? AND technique = ?;", (model[0], technique[0])).fetchall()
             for prompt_type in prompt_types:
-                print(f"Model: {model[0]} | Technique: {technique[0]} | prompt_type: {prompt_type}")
-                pred_sql = "SELECT id, prediction FROM predictions WHERE model = ? AND technique = ? AND prompt_type = ?;"
+                pred_sql = "SELECT * FROM predictions WHERE model = ? AND technique = ? AND prompt_type = ?;"
                 predictions_df = con.execute(pred_sql, (model[0], technique[0], prompt_type[0])).fetchdf()
-                calculate_failure_rate(model[0], technique[0], prompt_type[0], con)
-                calculate_macro_f1(predictions_df, con)
+                failure_rate = calculate_failure_rate(model[0], technique[0], prompt_type[0], con)
+                calculate_macro_f1(predictions_df, failure_rate, con)
+                
                 
 
 

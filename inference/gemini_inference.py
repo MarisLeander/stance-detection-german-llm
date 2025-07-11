@@ -114,8 +114,8 @@ def gemini_predictions(prompt_batch:list[dict], client:genai.Client):
         model = 'gemini-2.5-pro'
         prompt_type = prompt_dict.get("prompt_type")
         technique = 'zero_shot'
-        already_processed = already_processed(paragraph_id, model, prompt_type, technique)
-        if already_processed:
+        processed = already_processed(paragraph_id, model, prompt_type, technique)
+        if processed:
             # We dont need to waste credits then...
             continue
         else:
@@ -128,7 +128,7 @@ def gemini_predictions(prompt_batch:list[dict], client:genai.Client):
            
 def process_test_set():
     client = get_client()
-    to_be_predicted_batch = get_engineering_data(sample_size=30)
+    to_be_predicted_batch = get_engineering_data(sample_size=9999)
     prompt_types = get_prompt_list(cot=False, few_shot=False)
     for prompt_type in prompt_types:
         print(f"Calling api with samples and prompt: {prompt_type}...")
