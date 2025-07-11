@@ -53,8 +53,31 @@ def get_prompt_list(cot:bool=False, few_shot:bool=False) -> list[str]:
     else:
         return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_vanilla_expert_Textabschnitt","german_vanilla_expert_more_context", "german_vanilla_expert_more_context_Textabschnitt", "german_more_context", "english_vanilla"]
     
+def get_system_prompt(group:str, expert:bool=True, more_context:bool=True) -> str:
+    if expert and more_context:
+        #@ todo do this in json file!
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
 
-def get_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None) -> list[dict]:
+            Definition der Kategorien:
+            -`favour`: Die Haltung ist eindeutig und direkt positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
+            - `against`: Die Haltung ist eindeutig und direkt negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
+            - `neither`: Dies ist die Standardkategorie im Zweifelsfall. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen)."""
+    elif expert:
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück."""
+    elif more_context: 
+        return f"""Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            Definition der Kategorien:
+            -`favour`: Die Haltung ist eindeutig und direkt positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
+            - `against`: Die Haltung ist eindeutig und direkt negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
+            - `neither`: Dies ist die Standardkategorie im Zweifelsfall. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen)."""
+    else: 
+        return f"""Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück."""
+    
+
+def get_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None, expert=True, more_context=True) -> list[dict]:
     """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
 
     Args:
@@ -71,19 +94,33 @@ def get_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, sho
         paragraph = row['inference_paragraph']
         paragraph_id = row['id']
         group = row['group_text']
-        promp = ""
+        user_prompt = ""
+        system_prompt = ""
         if few_shot:
             if shots is None:
                 raise ValueError('Number of shots have to be specified!')
             else:
-                prompt = get_formatted_few_shot_prompt(paragraph_id, shots, paragraph, group, prompt_type)
+                user_prompt = get_formatted_user_few_shot_prompt(paragraph_id, shots, paragraph, group)
         else:
-            prompt = get_formatted_prompt(paragraph, group, prompt_type)
+            user_prompt = get_formatted_user_prompt(paragraph, group)
+        system_prompt = get_system_prompt(group, expert, more_context)
+        
         # append formatted prompt to batch
+        message = [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": user_prompt
+            }
+        ]
+        
         helper_dict = {
             "paragraph_id":paragraph_id,
             "prompt_type":prompt_type,
-            "prompt":prompt
+            "message":message
         }
         prompt_batch.append(helper_dict)
 
@@ -165,9 +202,63 @@ def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:st
         con.execute(sql, (paragraph_id, model, prompt_type, technique, None, thinking_process, thoughts))
         con.commit()
         con.close()
+        
+def insert_batch(records:list[dict]):
+    """ This function is used to insert a models prediction into our db.
+    
+    Args:
+        records (list): the values, to be inserted into db
+    """
+    con = connect_to_db()
+    con.begin()
+    sql = """
+        INSERT INTO predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
+        """
+    for record in records:
+        # Unpack the values from the dictionary for the current record
+        paragraph_id = record.get("id")
+        model = record.get("model")
+        prompt_type = record.get("prompt_type") # This corresponds to the 'run' column
+        technique = record.get("technique")
+        prediction = record.get("prediction")
+        thinking_process = record.get("thinking_process")
+        thoughts = record.get("thoughts") # This corresponds to the 'parsed_stance' column
+        # Insert prediction into db
+        try:
+            con.execute(sql, (paragraph_id, model, prompt_type, technique, prediction, thinking_process, thoughts))
+            con.commit()
+            con.close()
+        except ConstraintException:
+            # If the model fails to provide output out of ['favour', 'against', 'neither']
+            con.rollback()
+            con.begin()
+            con.execute(sql, (paragraph_id, model, prompt_type, technique, None, thinking_process, thoughts))
+            con.commit()
+            
+    con.close()
 
 
-def get_formatted_cot_shot_prompt(paragraph:str, group:str, prompt_type:str) -> str:
+def get_formatted_user_prompt(paragraph:str, group:str) -> str:
+    return f"""
+        Textabschnitt: {paragraph}
+        Label:
+    """
+
+def get_formatted_user_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:str, group:str) -> str:
+    few_shot_string = build_few_shot_examples(test_paragraph_id, shots)
+    return f"""
+        {few_shot_string}
+        Textabschnitt: {paragraph}
+        Target: {group}
+        Label:
+    """
+
+
+
+    
+def get_formatted_cot_prompt(paragraph:str, group:str, prompt_type:str) -> str:
 
     if prompt_type == 'german_vanilla_expert':
         return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
