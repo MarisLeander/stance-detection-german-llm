@@ -181,6 +181,14 @@ def calculate_macro_f1(predictions_df:pd.DataFrame, con:db.DuckDBPyConnection):
     print(f"Loose macro f1 = {loose_macro_f1}")
 
 def calculate_failure_rate(model:str, technique:str, prompt_type:str, con:db.DuckDBPyConnection):
+    """ Calculates in how many cases the model failed to provide a correct formatted output
+
+    Args:
+        model (str): The name of our model (e.g. 'gemini-2.5-pro')
+        technique (str): Prompting technique (e.g. 'zero-shot')
+        prompt_type (str): Corresponds to a prompt template
+        con (db.DuckDBPyConnection): The connection to our db
+    """
     total_preds_sql = "SELECT COUNT (DISTINCT id) FROM predictions WHERE model = ? AND technique = ? AND prompt_type = ?;"
     total_preds = con.execute(total_preds_sql, (model, technique, prompt_type)).fetchone()[0]
     null_preds_sql = "SELECT COUNT (DISTINCT id) FROM predictions WHERE model = ? AND technique = ? AND prompt_type = ? AND prediction IS NULL;"

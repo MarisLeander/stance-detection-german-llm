@@ -127,7 +127,7 @@ def main():
     try:
         llm = LLM(
             model=model_name,
-            tensor_parallel_size=1,  # Use 2 GPUs
+            tensor_parallel_size=2,  # Use 2 GPUs
             trust_remote_code=True
         )
     except Exception as e:

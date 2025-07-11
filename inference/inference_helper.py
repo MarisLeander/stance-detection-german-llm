@@ -47,11 +47,11 @@ def get_prompt_list(cot:bool=False, few_shot:bool=False) -> list[str]:
         few_shot (bool): Indicates wheter the model needs few_shot prompts or not
     """
     if cot:
-        pass
+        return ["german_vanilla_expert_more_context_cot", "german_vanilla_expert_cot"]
     elif few_shot:
-        return ["german_vanilla_expert", "german_vanilla_expert_v2", "german_vanilla_expert_v3",  "german_vanilla_expert_more_context"]
+        return ["german_vanilla_expert", "german_vanilla_expert_Textabschnitt" ,"german_vanilla_expert_v2", "german_vanilla_expert_v3",  "german_vanilla_expert_more_context", "german_vanilla_expert_more_context_Textabschnitt"]
     else:
-        return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "german_more_context", "english_vanilla"]
+        return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_vanilla_expert_Textabschnitt","german_vanilla_expert_more_context", "german_vanilla_expert_more_context_Textabschnitt", "german_more_context", "english_vanilla"]
     
 
 def get_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None) -> list[dict]:
@@ -167,10 +167,19 @@ def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:st
         con.close()
 
 
-def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:str, group:str, prompt_type:str) -> str:
-    few_shot_string = build_few_shot_examples(test_paragraph_id, shots)
+def get_formatted_cot_shot_prompt(paragraph:str, group:str, prompt_type:str) -> str:
+
     if prompt_type == 'german_vanilla_expert':
         return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+
+            Textabschnitt: {paragraph}
+            Targel: {group}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_Textabschnitt':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
         Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
 
             {few_shot_string}
@@ -196,6 +205,72 @@ def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:st
             Label:
         """
     elif prompt_type == 'german_vanilla_expert_more_context':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            Definition der Kategorien:
+            -`favour`: Die Haltung ist eindeutig und direkt positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
+            - `against`: Die Haltung ist eindeutig und direkt negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
+            - `neither`: Dies ist die Standardkategorie im Zweifelsfall. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen).
+        
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Target: {group}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_more_context_Textabschnitt':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            Definition der Kategorien:
+            -`favour`: Die Haltung ist eindeutig und direkt positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
+            - `against`: Die Haltung ist eindeutig und direkt negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
+            - `neither`: Dies ist die Standardkategorie im Zweifelsfall. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen).
+        
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Target: {group}
+            Label:
+        """
+
+def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:str, group:str, prompt_type:str) -> str:
+    few_shot_string = build_few_shot_examples(test_paragraph_id, shots)
+    if prompt_type == 'german_vanilla_expert':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Targel: {group}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_Textabschnitt':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Targel: {group}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_v2':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_v3':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            {few_shot_string}
+            Textabschnitt: {paragraph}
+            Gruppe: {group}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_more_context_Textabschnitt':
         return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
         Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
 
@@ -303,8 +378,27 @@ def get_formatted_prompt(paragraph:str, group:str, prompt_type:str) -> str:
             Textabschnitt: {paragraph}
             Label:
         """
+    elif prompt_type == 'german_vanilla_expert_Textabschnitt':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+            
+            Textabschnitt: {paragraph}
+            Label:
+        """
     elif prompt_type == 'german_vanilla_expert_more_context':
         return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textausschnitt.
+        Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
+
+            Definition der Kategorien:
+            -`favour`: Die Haltung ist eindeutig und direkt positiv. Der Sprecher lobt die Gruppe, verteidigt sie, fordert etwas zu ihren Gunsten oder gibt explizit an, für ihre Interessen einzutreten (z.B. "wir kämpfen für diese Gruppe").
+            - `against`: Die Haltung ist eindeutig und direkt negativ. Der Sprecher kritisiert, verurteilt oder warnt vor der Gruppe oder macht sie für ein Problem verantwortlich.
+            - `neither`: Dies ist die Standardkategorie im Zweifelsfall. Wähle sie, wenn die Haltung neutral, ambivalent oder unklar ist, oder wenn der Sprecher die Gruppe nur sachlich erwähnt (siehe Zentrale Anweisungen).
+            
+            Textabschnitt: {paragraph}
+            Label:
+        """
+    elif prompt_type == 'german_vanilla_expert_more_context_Textabschnitt':
+        return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
         Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
 
             Definition der Kategorien:
