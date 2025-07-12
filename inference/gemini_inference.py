@@ -3,10 +3,11 @@ import time
 from tqdm import tqdm
 from google import genai
 from pathlib import Path
+from datetime import datetime
 from google.genai import types
 from google.genai.errors import ClientError
 from google.genai.errors import ServerError
-from inference_helper import get_formatted_prompt, get_prompt_list, get_engineering_data, insert_prediction, get_test_batch, already_processed
+import inference_helper as ih
 
 def get_gemini_api_key() -> str:
     """Gets the users Google Gemini api key from the config file
@@ -23,7 +24,7 @@ def get_gemini_api_key() -> str:
     try:
         with open(path, "r") as config_file:
             config = json.load(config_file)
-        return config.get("gemini_api_key")
+        return config.get("gemini_api_key_1")
     except FileNotFoundError:
         print(f"Error: secrets file not found at {path}")
         return None
@@ -103,7 +104,7 @@ def parse_gemini_response(response:dict) -> tuple[str,str]:
             prediction += part.text
     return thoughts, prediction
 
-def gemini_predictions(prompt_batch:list[dict], client:genai.Client):
+def gemini_predictions(prompt_batch:list[dict], client:genai.Client, technique:str):
     """ Function for zero and few-shot predictions, since they have similarly structured output.
     """
     
@@ -113,8 +114,7 @@ def gemini_predictions(prompt_batch:list[dict], client:genai.Client):
         paragraph_id = prompt_dict.get("paragraph_id")
         model = 'gemini-2.5-pro'
         prompt_type = prompt_dict.get("prompt_type")
-        technique = 'zero_shot'
-        processed = already_processed(paragraph_id, model, prompt_type, technique)
+        processed = ih.already_processed(paragraph_id, model, prompt_type, technique)
         if processed:
             # We dont need to waste credits then...
             continue
@@ -122,18 +122,50 @@ def gemini_predictions(prompt_batch:list[dict], client:genai.Client):
             # Get api response
             response = do_gemini_api_call(prompt, paragraph_id, client)
             thoughts, prediction = parse_gemini_response(response)
-            # Insert pred into db
-            insert_prediction(paragraph_id, model, prompt_type, technique, prediction, thoughts, None)
+            if technique == "CoT":
+                thinking_process = prediction
+                prediction = ih.extract_stance_cot(thinking_process)
+                ih.insert_prediction(paragraph_id, model, prompt_type, technique, prediction, thoughts, thinking_process)
+            else:
+                # Insert pred into db
+                ih.insert_prediction(paragraph_id, model, prompt_type, technique, prediction, thoughts, None)
         
            
 def process_test_set():
     client = get_client()
-    to_be_predicted_batch = get_engineering_data(sample_size=9999)
-    prompt_types = get_prompt_list(cot=False, few_shot=False)
-    for prompt_type in prompt_types:
-        print(f"Calling api with samples and prompt: {prompt_type}...")
-        prompt_batch = get_test_batch(to_be_predicted_batch, prompt_type)
-        gemini_predictions(prompt_batch, client)
+    to_be_predicted_batch = ih.get_engineering_data(sample_size=9999)
+    
+    # # Process zero-shot prompts
+    # prompt_types = ih.get_prompt_list(cot=False, few_shot=False)
+    
+    # for prompt_type in prompt_types:
+    #     print(f"Calling api with samples and prompt: {prompt_type}...")
+    #     prompt_batch = ih.get_test_batch(to_be_predicted_batch, prompt_type)
+    #     gemini_predictions(prompt_batch, client, technique='zero_shot')
+        
+
+    # # Process few-shot prompts
+    # prompt_types_fs = ih.get_prompt_list(cot=False, few_shot=True)
+    
+    # for prompt_type in prompt_types_fs:
+    #     print(f"Calling gemini api with samples and few-shot prompt: {prompt_type}...")
+    #     print("Processing 1-shot prompts...")
+    #     prompt_batch_fs1 = ih.get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
+    #     gemini_predictions(prompt_batch_fs1, client, technique='1-shot')
+    #     print("Processing 5-shot prompts...")
+    #     prompt_batch_fs5 = ih.get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot')
+    #     gemini_predictions(prompt_batch_fs5, client, technique='5-shot')
+    #     print("Processing 10-shot prompts...")
+    #     prompt_batch_fs10 = ih.get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot')
+    #     gemini_predictions(prompt_batch_fs10, client, technique='10-shot')
+
+    # Process CoT prompts
+    prompt_types_cot = ih.get_prompt_list(cot=True, few_shot=False)
+
+    for prompt_type in prompt_types_cot:
+        print(f"Calling gemma model with samples and CoT prompt: {prompt_type}...")
+        prompt_batch_cot = ih.get_test_batch(to_be_predicted_batch, prompt_type, cot=True)
+        gemini_predictions(prompt_batch_cot, client, technique='CoT')
     
 
 def main():

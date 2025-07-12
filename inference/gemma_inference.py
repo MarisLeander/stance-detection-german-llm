@@ -6,6 +6,7 @@ import vllm
 import contextlib
 from pathlib import Path
 from vllm import LLM, SamplingParams
+import inference_helper as ih
 from inference_helper import get_formatted_prompt, get_prompt_list, get_engineering_data, insert_prediction, insert_batch, get_test_batch, get_split_test_batch
 
 def get_hf_api_key() -> str:
@@ -21,85 +22,12 @@ def get_hf_api_key() -> str:
         return None
 
 
-
-def run_silently(func, *args, **kwargs):
-    """
-    Runs a function while redirecting all stdout and stderr output
-    to a black hole, effectively silencing it.
-
-    Args:
-        func: The function to run silently.
-        *args: Positional arguments to pass to the function.
-        **kwargs: Keyword arguments to pass to the function.
-
-    Returns:
-        The return value of the function that was run.
-    """
-    # Redirect stdout and stderr to a dummy stream
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        # Call the original function
-        result = func(*args, **kwargs)
-    
-    return result
-    
-def do_gemma_inference(message:list[dict[str,str]], input_data, llm:vllm.entrypoints.llm.LLM, sampling_params:vllm.sampling_params.SamplingParams) -> str:
-    # Assume 'tokenizer' is your loaded tokenizer
-    # and 'paragraph' and 'group' are your variables
-
-    # 1. Define the conversation as a list of dictionaries
-
-
-    # 2. Apply the template
-    # This will automatically add <start_of_turn>user, <end_of_turn>, etc.
-    formatted_prompt = tokenizer.apply_chat_template(
-        message, 
-        tokenize=False, 
-        add_generation_prompt=True
-    )
-
-    # 3. Pass this formatted_prompt to your llm.generate() call
-    # outputs = llm.generate([formatted_prompt], sampling_params)
-    # Generate the response
-    responses = run_silently(llm.generate, [prompt], sampling_params)
-    # Print the output
-    if len(responses) > 1:
-        print("Output was longer than 1!!")
-    else:
-        generated_text = responses[0].outputs[0].text.strip() 
-        return generated_text
-
-def gemma_cot_predictions(prompt_batch, llm:vllm.entrypoints.llm.LLM):
-    # Define sampling parameters
-    sampling_params = SamplingParams(temperature=0.0, max_tokens=1000)
-    # Get api response
-    response = do_gemma_inference(prompt, engineering_id, llm, sampling_params)
-    pass
-    
-def gemma_predictions(prompt_batch:list[dict], llm:vllm.entrypoints.llm.LLM, technique, few_shot=False):
-    """ Function for zero and few-shot predictions, since they have similarly structured output.
-    """
-    # Define sampling parameters. We need fewer if CoT is not needed. This speed up the model, if it generates non-sense
-    sampling_params = SamplingParams(temperature=0.0, max_tokens=20)
-    
-    for prompt_dict in prompt_batch:
-        # Get prompt information
-        message = prompt_dict.get("message")
-        paragraph_id = prompt_dict.get("paragraph_id")
-        prompt_type = prompt_dict.get("prompt_type")
-        # Get gemma prediction
-        prediction = do_gemma_inference(prompt, paragraph_id, llm, sampling_params)
-        # print(f"Prompt: {prompt}\nPrediction: {prediction}")
-        if few_shot:
-            insert_prediction(paragraph_id, 'gemma-3-27b-it', prompt_type, technique, prediction, None, None)
-        else:
-            insert_prediction(paragraph_id, 'gemma-3-27b-it', prompt_type, 'zero_shot', prediction, None, None)
-
 def gemma_split_batch_inference(
     prompt_batch: list[dict],
     llm:vllm.entrypoints.llm.LLM,
     technique: str
 ):
-    sampling_params = SamplingParams(temperature=0.0, max_tokens=20)
+    sampling_params = SamplingParams(temperature=0.0, max_tokens=5000)
     # Get the tokenizer from the llm object
     tokenizer = llm.get_tokenizer()
 
@@ -125,19 +53,30 @@ def gemma_split_batch_inference(
         paragraph_id = prompt_dict.get("paragraph_id")
         prompt_type = prompt_dict.get("prompt_type")
         generated_text = output.outputs[0].text.strip()
-        records_to_insert.append(
-            {
-                "id":paragraph_id, 
-                 "model":'gemma-3-27b-it', 
-                 "prompt_type":prompt_type, 
-                 "technique":technique, 
-                 "prediction":generated_text, 
-                 "thinking_process":None, 
-                 "thoughts":None
-            }
-        )
+        
+        if technique != "it-CoT":
+            records_to_insert.append({
+                "id": paragraph_id, 
+                "model": 'gemma-3-27b-it', 
+                "prompt_type": prompt_type, 
+                "technique": technique, 
+                "prediction": generated_text, 
+                "thinking_process": None, # Placeholder
+                "thoughts": None # Placeholder
+            })
+        elif technique == "it-CoT":
+            records_to_insert.append({
+                "id": paragraph_id, 
+                "model": 'gemma-3-27b-it', 
+                "prompt_type": prompt_type, 
+                "technique": technique, 
+                "prediction": ih.extract_stance_cot(generated_text), 
+                "thinking_process": generated_text,
+                "thoughts": None # Placeholder
+            })
+            
     print("Inserting predictions into db")
-    insert_batch(records_to_insert)
+    insert_batch(records_to_insert)  
 
 def gemma_batch_inference(
     prompt_batch: list[dict],
@@ -150,7 +89,13 @@ def gemma_batch_inference(
     This version assumes each dictionary in 'prompt_batch' contains a 'prompt'
     key with the full, final prompt string, and does NOT apply a chat template.
     """
-    sampling_params = SamplingParams(temperature=0.0, max_tokens=20)
+    sampling_params = None
+    if technique == "CoT":
+        # If the model should produce a chain-of-thought we need more output tokens
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=5000)
+    else:
+        # If not we only need a label, which need significantly less tokens
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=20)
 
     # Directly extract the prompt string from each dictionary
     print("Extracting pre-formatted prompts from the batch...")
@@ -170,17 +115,27 @@ def gemma_batch_inference(
         paragraph_id = prompt_dict.get("paragraph_id")
         prompt_type = prompt_dict.get("prompt_type")
         generated_text = output.outputs[0].text.strip()
-        
-        records_to_insert.append({
-            "id": paragraph_id, 
-            "model": 'gemma-3-27b-it', 
-            "prompt_type": prompt_type, 
-            "technique": technique, 
-            "prediction": generated_text, 
-            "thinking_process": None, # Placeholder
-            "thoughts": None # Placeholder
-        })
-        
+
+        if technique != "CoT":
+            records_to_insert.append({
+                "id": paragraph_id, 
+                "model": 'gemma-3-27b-it', 
+                "prompt_type": prompt_type, 
+                "technique": technique, 
+                "prediction": generated_text, 
+                "thinking_process": None, # Placeholder
+                "thoughts": None # Placeholder
+            })
+        elif technique == "CoT":
+            records_to_insert.append({
+                "id": paragraph_id, 
+                "model": 'gemma-3-27b-it', 
+                "prompt_type": prompt_type, 
+                "technique": technique, 
+                "prediction": ih.extract_stance_cot(generated_text), 
+                "thinking_process": generated_text, # Placeholder
+                "thoughts": None # Placeholder
+            })
     print("Inserting predictions into db")
     insert_batch(records_to_insert)        
     
@@ -188,36 +143,52 @@ def gemma_batch_inference(
 
 def process_test_set(llm:vllm.entrypoints.llm.LLM):
     to_be_predicted_batch = get_engineering_data(sample_size=99999)
-    
-    prompt_types_itzs =["german_vanilla_expert_more_context", "german_vanilla_expert"]
+
+    # Process zero-shot prompts with instruction tuned optimized input
+    prompt_types_itzs =["german_vanilla_expert_more_context", "german_vanilla_expert", "german_vanilla_expert_more_context_cot"]
     
     for prompt_type in prompt_types_itzs:
         print(f"Calling gemma models with samples and it-zero-shot prompt: {prompt_type}...")
-        if prompt_type == "german_vanilla_expert":
-            prompt_batch_itzs =  get_split_test_batch(to_be_predicted_batch, prompt_type, expert=True, more_context=False)
-        elif prompt_type == "german_vanilla_expert_more_context":
-            prompt_batch_itzs =  get_split_test_batch(to_be_predicted_batch, prompt_type, expert=True, more_context=True)
-        gemma_split_batch_inference(prompt_batch_itzs, llm, technique='it-zero-shot')
+        # if prompt_type == "german_vanilla_expert":
+        #     prompt_batch_itzs =  get_split_test_batch(to_be_predicted_batch, prompt_type, expert=True, more_context=False)
+        #     gemma_split_batch_inference(prompt_batch_itzs, llm, technique='it-zero-shot')
+        # elif prompt_type == "german_vanilla_expert_more_context":
+        #     prompt_batch_itzs =  get_split_test_batch(to_be_predicted_batch, prompt_type, expert=True, more_context=True)
+        #     gemma_split_batch_inference(prompt_batch_itzs, llm, technique='it-zero-shot')
+        if prompt_type == "german_vanilla_expert_more_context_cot":
+            prompt_batch_itzs =  get_split_test_batch(to_be_predicted_batch, prompt_type, cot=True)
+            gemma_split_batch_inference(prompt_batch_itzs, llm, technique='it-CoT')
 
-    prompt_types_zs = get_prompt_list(cot=False, few_shot=False)
-    for prompt_type in prompt_types_zs:
-        print(f"Calling gemma models with samples and zero-shot prompt: {prompt_type}...")
-        prompt_batch_zs =  get_test_batch(to_be_predicted_batch, prompt_type)
-        gemma_batch_inference(prompt_batch_zs, llm, technique='zero-shot')
+    # # Process zero-shot prompts
+    # prompt_types_zs = get_prompt_list(cot=False, few_shot=False)
     
-    prompt_types_fs = get_prompt_list(cot=False, few_shot=True)
+    # for prompt_type in prompt_types_zs:
+    #     print(f"Calling gemma models with samples and zero-shot prompt: {prompt_type}...")
+    #     prompt_batch_zs =  get_test_batch(to_be_predicted_batch, prompt_type)
+    #     gemma_batch_inference(prompt_batch_zs, llm, technique='zero-shot')
+        
+    # # Process few-shot prompts
+    # prompt_types_fs = get_prompt_list(cot=False, few_shot=True)
     
-    for prompt_type in prompt_types_fs:
-        print(f"Calling gemma model with samples and few-shot prompt: {prompt_type}...")
-        print("Processing 1-shot prompts...")
-        prompt_batch_fs1 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
-        gemma_batch_inference(prompt_batch_fs1, llm, technique='1-shot')
-        print("Processing 5-shot prompts...")
-        prompt_batch_fs5 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot')
-        gemma_batch_inference(prompt_batch_fs5, llm, technique='5-shot')
-        print("Processing 10-shot prompts...")
-        prompt_batch_fs10 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot')
-        gemma_batch_inference(prompt_batch_fs10, llm, technique='10-shot')
+    # for prompt_type in prompt_types_fs:
+    #     print(f"Calling gemma model with samples and few-shot prompt: {prompt_type}...")
+    #     print("Processing 1-shot prompts...")
+    #     prompt_batch_fs1 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
+    #     gemma_batch_inference(prompt_batch_fs1, llm, technique='1-shot')
+    #     print("Processing 5-shot prompts...")
+    #     prompt_batch_fs5 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot')
+    #     gemma_batch_inference(prompt_batch_fs5, llm, technique='5-shot')
+    #     print("Processing 10-shot prompts...")
+    #     prompt_batch_fs10 = get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot')
+    #     gemma_batch_inference(prompt_batch_fs10, llm, technique='10-shot')
+
+    # # Process CoT prompts
+    # prompt_types_cot = ih.get_prompt_list(cot=True, few_shot=False)
+
+    # for prompt_type in prompt_types_cot:
+    #     print(f"Calling gemma model with samples and CoT prompt: {prompt_type}...")
+    #     prompt_batch_cot = get_test_batch(to_be_predicted_batch, prompt_type, cot=True)
+    #     gemma_batch_inference(prompt_batch_cot, llm, technique='CoT')
            
         
 
@@ -252,6 +223,7 @@ def main():
 
     elapsed_time = (time.time() - start_time) / 60
     print(f"--- LLM setup complete in {elapsed_time:.2f} min. ---")
+
     process_test_set(llm)
 
 

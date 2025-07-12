@@ -16,10 +16,11 @@ def connect_to_db() -> db.DuckDBPyConnection:
     db_path = home_dir / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
     return db.connect(database=db_path, read_only=False)
 
-def create_evaluation_table(reset_db:bool=True, con:db.DuckDBPyConnection):
+def create_evaluation_table(con:db.DuckDBPyConnection, reset_db:bool=True):
     con.begin()
     if reset_db:
-        on.execute("DROP TABLE IF EXISTS label_f1;")
+        con.execute("DROP TABLE IF EXISTS eval_matrix;")
+        con.execute("DROP TABLE IF EXISTS label_f1;")
         con.execute("DROP TABLE IF EXISTS model_evaluation;")
         con.execute("DROP SEQUENCE IF EXISTS config_id_seq;")
         
@@ -29,9 +30,9 @@ def create_evaluation_table(reset_db:bool=True, con:db.DuckDBPyConnection):
     create_overall_table_sql = """
         CREATE TABLE IF NOT EXISTS model_evaluation (
             config_id INTEGER DEFAULT nextval('config_id_seq') PRIMARY KEY,
-            model VARCHAR NOT NULL REFERENCES predictions(model),
-            prompt_type VARCHAR NOT NULL REFERENCES predictions(prompt_type),
-            technique VARCHAR NOT NULL REFERENCES predictions(technique), --e.g. 0-shot, k-shot, CoT, etc.
+            model VARCHAR NOT NULL,
+            prompt_type VARCHAR NOT NULL,
+            technique VARCHAR NOT NULL, --e.g. 0-shot, k-shot, CoT, etc.
             failure_rate FLOAT NOT NULL,
             loose_macro_f1 FLOAT NOT NULL,
             strict_macro_f1 FLOAT NOT NULL,
@@ -47,8 +48,22 @@ def create_evaluation_table(reset_db:bool=True, con:db.DuckDBPyConnection):
             PRIMARY KEY(config_id, label)
         );
     """
+
+    create_matrix_table_sql = """
+        CREATE TABLE IF NOT EXISTS eval_matrix (
+            config_id INTEGER NOT NULL REFERENCES model_evaluation(config_id),
+            label VARCHAR(8) NOT NULL,
+            eval_type VARCHAR(8) NOT NULL CHECK (eval_type IN ('strict', 'loose')),
+            tp INTEGER NOT NULL,
+            fp INTEGER NOT NULL,
+            tn INTEGER NOT NULL,
+            fn INTEGER NOT NULL,
+            PRIMARY KEY (config_id, label, eval_type)
+        );
+    """
     con.execute(create_overall_table_sql)
     con.execute(create_label_table_sql)
+    con.execute(create_matrix_table_sql)
     con.commit()
     
 def calculate_f1(tp:int, fp:int, tn:int, fn:int) -> int:
@@ -87,7 +102,7 @@ def calculate_f1(tp:int, fp:int, tn:int, fn:int) -> int:
 
 def macro_f1_formula(f1_scores:list[str,int]) -> int:
      # Calculates the sum of the f1 scores
-    total_sum = sum(item[1] for item in f1_scores)
+    total_sum = sum(item for item in f1_scores)
     
     # Divides the sum by the total number of items.
     macro_f1 = total_sum / len(f1_scores)
@@ -97,7 +112,7 @@ def calculate_strict_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyC
     # Get ids of all predictions for current label
     label_pred_ids = predictions_df[predictions_df['prediction'] == label].id.tolist()
     # Get ids of all prediction for the other labels
-    neg_label_pred_ids = predictions_df[predictions_df['prediction'] != label].id.tolist()
+    neg_label_pred_ids = predictions_df[(predictions_df['prediction'] != label) & (predictions_df['prediction'].notna())].id.tolist()
     # Get true pos, false pos, etc.
     tp = con.execute(f"SELECT count(*) FROM annotated_paragraphs WHERE id IN ? AND agreed_label = ?", (tuple(label_pred_ids), label)).fetchone()[0]
     fp = con.execute(f"SELECT count(*) FROM annotated_paragraphs WHERE id IN ? AND agreed_label <> ?", (tuple(label_pred_ids), label)).fetchone()[0]
@@ -108,13 +123,13 @@ def calculate_strict_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyC
     # print(f"TN: {tn}")
     # print(f"FN: {fn}")
     f1_score = calculate_f1(tp, fp, tn, fn)
-    return f1_score
+    return (f1_score, {"tp":tp, "fp":fp, "tn":tn, "fn":fn})
 
 def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyConnection) -> int:
     # Get ids of all predictions for current label
     label_pred_ids = predictions_df[predictions_df['prediction'] == label].id.tolist()
     # Get ids of all prediction for the other labels
-    neg_label_pred_ids = predictions_df[predictions_df['prediction'] != label].id.tolist()
+    neg_label_pred_ids = predictions_df[(predictions_df['prediction'] != label) & (predictions_df['prediction'].notna())].id.tolist()
     # Create view to compare annotations of the annotators
     view_sql = """
         CREATE VIEW LabelersAnnotations AS (
@@ -184,31 +199,10 @@ def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyCo
             AND (harriet_stance = ? OR maris_stance = ?);
     """
     fn = con.execute(fn_sql, (tuple(neg_label_pred_ids), label, label)).fetchone()[0]
-    # print(f"TP: {tp}")
-    # print(f"FP: {fp}")
-    # print(f"TN: {tn}")
-    # print(f"FN: {fn}")
     f1_score = calculate_f1(tp, fp, tn, fn)
     # Drop our view
     con.execute("DROP VIEW LabelersAnnotations;")
-    return f1_score
-
-def insert_label_f1(
-    predictions_df:pd.DataFrame, 
-    con:db.DuckDBPyConnection,
-    label:str, 
-    strict_f1_score:float, 
-    loose_f1_score:float
-):
-    model = predictions_df.loc[0, 'model']
-    prompt_type = predictions_df.loc[0, 'prompt_type']
-    technique = predictions_df.loc[0, 'technique']
-    sql = "SELECT config_id FROM model_evaluation WHERE model = ? AND prompt_type = ? AND technique = ?"
-    config_id = con.execute(sql, (model, prompt_type, technique))
-    insert_sql = "INSERT INTO label_f1 (config_id, label, loose_f1, strict_f1) VALUES (?, ?, ?, ?)"
-    con.begin()
-    con.execute(insert_sql, (config_id, label, strict_f1_score, loose_f1_score))
-    con.commit()
+    return (f1_score, {"tp":tp, "fp":fp, "tn":tn, "fn":fn})
 
 def insert_macro_f1(
     predictions_df:pd.DataFrame,
@@ -219,40 +213,128 @@ def insert_macro_f1(
 ):
     model = predictions_df.loc[0, 'model']
     prompt_type = predictions_df.loc[0, 'prompt_type']
-    technique = predictions_df.loc[0, 'technique
+    technique = predictions_df.loc[0, 'technique']
     con.begin()
     insert_sql = "INSERT INTO model_evaluation (model, prompt_type, technique, failure_rate, loose_macro_f1, strict_macro_f1) VALUES (?, ?, ?, ?, ?, ?);"
     con.execute(insert_sql, (model, prompt_type, technique, failure_rate, loose_macro_f1, strict_macro_f1))
     con.commit()
+
+
+def get_config_id(predictions_df:pd.DataFrame, con:db.DuckDBPyConnection) -> int:
+    """ Gets the config id for a given (model, prompt_type, technique) combination.
+    """
+    model = predictions_df.loc[0, 'model']
+    prompt_type = predictions_df.loc[0, 'prompt_type']
+    technique = predictions_df.loc[0, 'technique']
+    sql = "SELECT config_id FROM model_evaluation WHERE model = ? AND prompt_type = ? AND technique = ?"
+    return con.execute(sql, (model, prompt_type, technique)).fetchone()[0]
     
+def insert_label_f1(
+    predictions_df:pd.DataFrame, 
+    con:db.DuckDBPyConnection,
+    label:str, 
+    strict_f1_score:float, 
+    loose_f1_score:float
+):
+    config_id = get_config_id(predictions_df, con)
+    insert_sql = "INSERT INTO label_f1 (config_id, label, loose_f1, strict_f1) VALUES (?, ?, ?, ?)"
+    con.begin()
+    con.execute(insert_sql, (config_id, label, strict_f1_score, loose_f1_score))
+    con.commit()
+
+def insert_eval_matrix(
+    predictions_df: pd.DataFrame, 
+    con: db.DuckDBPyConnection,
+    label: str, 
+    strict_matrix_dict: dict[str, int],
+    loose_matrix_dict: dict[str, int]
+):
+    """
+    Efficiently inserts the strict and loose evaluation matrices for a given label
+    into the database using a single executemany call.
+
+    Args:
+        predictions_df (pd.DataFrame): DataFrame containing prediction run info.
+        con (db.DuckDBPyConnection): An active connection to the DuckDB database.
+        label (str): The specific label these metrics apply to (e.g., 'favour').
+        strict_matrix_dict (dict): A dictionary with keys 'tp', 'fp', 'tn', 'fn'.
+        loose_matrix_dict (dict): A dictionary with keys 'tp', 'fp', 'tn', 'fn'.
+    """
+    # --- Step 1: Get the configuration ID for this run ---
+    config_id = get_config_id(predictions_df, con)
+
+    # --- Step 2: Prepare the data for bulk insertion ---
+    # Create a list of tuples, where each tuple represents a row to be inserted.
+    records_to_insert = [
+        (
+            config_id,
+            label,
+            'strict', # The evaluation type
+            strict_matrix_dict.get('tp', 0),
+            strict_matrix_dict.get('fp', 0),
+            strict_matrix_dict.get('tn', 0),
+            strict_matrix_dict.get('fn', 0)
+        ),
+        (
+            config_id,
+            label,
+            'loose', # The evaluation type
+            loose_matrix_dict.get('tp', 0),
+            loose_matrix_dict.get('fp', 0),
+            loose_matrix_dict.get('tn', 0),
+            loose_matrix_dict.get('fn', 0)
+        )
+    ]
+
+    # --- Step 3: Define the SQL and execute in a single batch ---
+    # This is much more efficient than looping and calling execute() multiple times.
+    insert_sql = """
+        INSERT INTO eval_matrix (config_id, label, eval_type, tp, fp, tn, fn)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+    """
+    
+    con.executemany(insert_sql, records_to_insert)
     
 def calculate_macro_f1(predictions_df:pd.DataFrame, failure_rate:int, con:db.DuckDBPyConnection):
     labels = ['favour', 'against', 'neither']
     strict_f1_per_class = []
     loose_f1_per_class = []
     for label in labels:
-        print(f"\nLabel: {label}")
         # For the strict f1 score the model has to predict the agreed on label, which is neither if the annotators labelled different labels.
-        strict_f1_score = calculate_strict_f1(predictions_df, label, con)
-        strict_f1_per_class.append((label, strict_f1_score))
+        strict_f1_score, matrix_dict = calculate_strict_f1(predictions_df, label, con)
+        strict_f1_per_class.append({"label":label, 
+                                   "strict_f1_score":strict_f1_score, 
+                                   "matrix_dict":matrix_dict})
         # For the loose f1 score, the model has only to predict one of the labels each annotator labelled.
-        loose_f1_score = calculate_loose_f1(predictions_df, label, con)
-        loose_f1_per_class.append((label, loose_f1_score))
-
-    strict_macro_f1 = macro_f1_formula(strict_f1_per_class)
-    print(f"Strict macro f1 = {strict_macro_f1}")
-    loose_macro_f1 = macro_f1_formula(loose_f1_per_class)
-    print(f"Loose macro f1 = {loose_macro_f1}")
-
+        loose_f1_score, matrix_dict = calculate_loose_f1(predictions_df, label, con)
+        loose_f1_per_class.append({"label":label, 
+                                   "loose_f1_score":loose_f1_score, 
+                                   "matrix_dict":matrix_dict})
+    # Get all of our strict_f1 scores per label, to calculate the macro_f1
+    strict_scores_list = [item['strict_f1_score'] for item in strict_f1_per_class]
+    strict_macro_f1 = macro_f1_formula(strict_scores_list)
+    # Get all of our loose_f1 scores per label, to calculate the macro_f1
+    loose_scores_list = [item['loose_f1_score'] for item in loose_f1_per_class]
+    loose_macro_f1 = macro_f1_formula(loose_scores_list)
+    # Insert our macro f1 scores
     insert_macro_f1(predictions_df, con, failure_rate, strict_macro_f1, loose_macro_f1)
     
     for i in range (0, 3):
-        label_s, strict_f1_score = strict_f1_per_class[i]
-        label_l, loose_f1_score = loose_f1_per_class[i]
-        if label_l != label_s:
+        # Get for each label the strict evaluation information for the db
+        strict_label = strict_f1_per_class[i].get("label")
+        strict_f1_score = strict_f1_per_class[i].get("strict_f1_score")
+        strict_matrix_dict = strict_f1_per_class[i].get("matrix_dict")
+        # Get for each label the loose evaluation information for the db
+        loose_label = loose_f1_per_class[i].get("label")
+        loose_f1_score = loose_f1_per_class[i].get("loose_f1_score")
+        loose_matrix_dict = loose_f1_per_class[i].get("matrix_dict")
+        # Check if the labels are the same
+        if strict_label != loose_label:
             raise ValueError('Labels are not the same!')
         else:
-            insert_label_f1(predictions_df, con, label_s, strict_f1_score, loose_f1_score)
+            # Insert eval. into db
+            insert_label_f1(predictions_df, con, strict_label, strict_f1_score, loose_f1_score)
+            insert_eval_matrix(predictions_df, con, strict_label, strict_matrix_dict, loose_matrix_dict)
 
     
 
@@ -270,6 +352,7 @@ def calculate_failure_rate(model:str, technique:str, prompt_type:str, con:db.Duc
     null_preds_sql = "SELECT COUNT (DISTINCT id) FROM predictions WHERE model = ? AND technique = ? AND prompt_type = ? AND prediction IS NULL;"
     null_preds = con.execute(null_preds_sql, (model, technique, prompt_type)).fetchone()[0]
     failure_rate = round(((null_preds / total_preds) * 100), 2)
+    return failure_rate
     
 
 def evaluate_predictions(con:db.DuckDBPyConnection):
@@ -289,6 +372,7 @@ def evaluate_predictions(con:db.DuckDBPyConnection):
 
 def main():
     con = connect_to_db()
+    create_evaluation_table(con)
     evaluate_predictions(con)
     con.close()
 
