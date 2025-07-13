@@ -105,7 +105,7 @@ def parse_gemini_response(response:dict) -> tuple[str,str]:
             prediction += part.text
     return thoughts, prediction
 
-def gemini_predictions(prompt_batch:list[dict], client:genai.Client, technique:str):
+def gemini_predictions(prompt_batch:list[dict], client:genai.Client, technique:str, it_setup:bool=False):
     """ Function for zero and few-shot predictions, since they have similarly structured output.
     """
     
@@ -122,11 +122,12 @@ def gemini_predictions(prompt_batch:list[dict], client:genai.Client, technique:s
 
         system_prompt = None
         user_prompt = None
-        if technique == 'it-5-shot':
+        if it_setup:
+            # If we use the split prompts, we need to adjust our user and system prompt.
             system_prompt = prompt_dict.get("message")[0].get("content")
             user_prompt =  prompt_dict.get("message")[1].get("content")
         else:
-            # Get prompt information
+            # If we don't do split prompts our user prompt is the complete prompt.
             user_prompt = prompt_dict.get("prompt")
             
         # Get api response
@@ -144,7 +145,39 @@ def gemini_predictions(prompt_batch:list[dict], client:genai.Client, technique:s
 def process_test_set():
     client = get_client()
     to_be_predicted_batch = ih.get_engineering_data(sample_size=9999)
-    
+
+    # #  ****** Process it-split-prompts ******
+    # 1. Process zero-shot split-prompts
+    prompt_types = ih.get_prompt_list(cot=False, few_shot=False, it_setup=True)
+    for prompt_type in prompt_types:
+        print(f"Processing {prompt_type}")
+        # Get batch of to-be-processed prompts
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type)
+        gemini_predictions(prompt_batch, client, technique='zero-shot', it_setup=True)
+        
+    # 2. Process cot split-prompts
+    prompt_types = ih.get_prompt_list(cot=True, few_shot=False, it_setup=True)
+    for prompt_type in prompt_types:
+        print(f"Processing {prompt_type}")
+         # Get batch of to-be-processed prompts
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type)
+        gemini_predictions(prompt_batch, client, technique='CoT', it_setup=True)
+
+    # 3. Process few-shot split-prompts
+    prompt_types = ih.get_prompt_list(cot=False, few_shot=True, it_setup=True)
+    for prompt_type in prompt_types:
+        # Get batch of to-be-processed prompts
+        print(f"Processing 1-shot for {prompt_type}")
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
+        gemini_predictions(prompt_batch, client, technique='1-shot', it_setup=True)
+        print(f"Processing 5-shot for {prompt_type}")
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot'5)
+        gemini_predictions(prompt_batch, client, technique='5-shot', it_setup=True)
+        print(f"Processing 10-shot for {prompt_type}")
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot')
+        gemini_predictions(prompt_batch, client, technique='10-shot', it_setup=True)
+
+    # #  ****** Process non-it-split-prompts ******
     # # Process zero-shot prompts
     # prompt_types = ih.get_prompt_list(cot=False, few_shot=False)
     
@@ -176,15 +209,6 @@ def process_test_set():
     #     print(f"Calling gemma model with samples and CoT prompt: {prompt_type}...")
     #     prompt_batch_cot = ih.get_test_batch(to_be_predicted_batch, prompt_type, cot=True)
     #     gemini_predictions(prompt_batch_cot, client, technique='CoT')
-
-    # Process system_prompt_templates
-    prompt_type = "german_vanilla_expert_more_context"
-    # prompt_batch_itfs =  get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots=1)
-    # gemma_split_batch_inference(prompt_batch_itfs, llm, technique='it-1-shot')
-    prompt_batch_itfs =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots=5)
-    gemini_predictions(prompt_batch_itfs, client, technique='it-5-shot')
-    # prompt_batch_itfs =  get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots=10)
-    # gemma_split_batch_inference(prompt_batch_itfs, llm, technique='it-10-shot')
     
 
 def main():
