@@ -719,7 +719,3 @@ Paragraph: {paragraph}
 Target: {group}
 Label:
 """
-
-if __name__ == "__main__":
-    print(get_formatted_few_shot_prompt(113212, '5-shot', 'Das hier ist ein <span>TEST<\span>', 'TEST', 'german_vanilla_expert'),'\n')
-    print(get_formatted_few_shot_prompt(113212, '5-shot', 'Das hier ist ein <span>TEST<\span>', 'TEST', 'german_vanilla_expert_more_context'))

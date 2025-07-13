@@ -170,20 +170,20 @@ def process_test_set(llm:vllm.entrypoints.llm.LLM):
     #     gemma_split_batch_inference(prompt_batch, llm, technique='CoT')
 
     # 3. Process few-shot split-prompts
-    prompt_types = ih.get_prompt_list(cot=False, few_shot=True, it_setup=True)
-    for prompt_type in prompt_types:
-        print(f"Processing 1-shot for {prompt_type}")
-        # Get batch of to-be-processed prompts
-        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
-        gemma_split_batch_inference(prompt_batch, llm, technique='1-shot')
-        print(f"Processing 5-shot for {prompt_type}")
-        # Get batch of to-be-processed prompts
-        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
-        gemma_split_batch_inference(prompt_batch, llm, technique='5-shot')
-        print(f"Processing 10-shot for {prompt_type}")
-        # Get batch of to-be-processed prompts
-        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
-        gemma_split_batch_inference(prompt_batch, llm, technique='10-shot')
+    # prompt_types = ih.get_prompt_list(cot=False, few_shot=True, it_setup=True)
+    # for prompt_type in prompt_types:
+    #     print(f"Processing 1-shot for {prompt_type}")
+    #     # Get batch of to-be-processed prompts
+    #     prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
+    #     gemma_split_batch_inference(prompt_batch, llm, technique='1-shot')
+    #     print(f"Processing 5-shot for {prompt_type}")
+    #     # Get batch of to-be-processed prompts
+    #     prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
+    #     gemma_split_batch_inference(prompt_batch, llm, technique='5-shot')
+    #     print(f"Processing 10-shot for {prompt_type}")
+    #     # Get batch of to-be-processed prompts
+    #     prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
+    #     gemma_split_batch_inference(prompt_batch, llm, technique='10-shot')
     
     # #  ****** Process non-it-split-prompts ******
     # # Process zero-shot prompts
@@ -194,8 +194,8 @@ def process_test_set(llm:vllm.entrypoints.llm.LLM):
     #     prompt_batch_zs =  get_test_batch(to_be_predicted_batch, prompt_type)
     #     gemma_batch_inference(prompt_batch_zs, llm, technique='zero-shot')
         
-    # # Process few-shot prompts
-    # prompt_types_fs = get_prompt_list(cot=False, few_shot=True)
+    # Process few-shot prompts
+    prompt_types_fs = get_prompt_list(cot=False, few_shot=True)
     
     for prompt_type in prompt_types_fs:
         print(f"Calling gemma model with samples and few-shot prompt: {prompt_type}...")
