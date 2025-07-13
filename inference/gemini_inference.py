@@ -24,7 +24,7 @@ def get_gemini_api_key() -> str:
     try:
         with open(path, "r") as config_file:
             config = json.load(config_file)
-        return config.get("gemini_api_key_1")
+        return config.get("gemini_api_key_2")
     except FileNotFoundError:
         print(f"Error: secrets file not found at {path}")
         return None
@@ -50,7 +50,7 @@ def write_log(msg: str, logfile: str):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_file.write(f"{timestamp}\n{msg}\n\n")
 
-def do_gemini_api_call(prompt:str, input_data, client:genai.Client) -> dict:
+def do_gemini_api_call(instruction_string:str, user_prompt:str, input_data, client:genai.Client) -> dict:
     """ Calls the Gemini API with the given prompt and input data
 
     Args:
@@ -60,6 +60,12 @@ def do_gemini_api_call(prompt:str, input_data, client:genai.Client) -> dict:
     Returns:
         The response from the API
     """
+    client_config = None
+    if instruction_string:
+        client_config = types.GenerateContentConfig(system_instruction=instruction_string, temperature=0.0, thinking_config=types.ThinkingConfig(include_thoughts=True))
+    else:
+        client_config = types.GenerateContentConfig(temperature=0.0, thinking_config=types.ThinkingConfig(include_thoughts=True))
+    
     response = None
     successful_api_call = False
     i = 0
@@ -68,13 +74,8 @@ def do_gemini_api_call(prompt:str, input_data, client:genai.Client) -> dict:
         try:
             response = client.models.generate_content(
                 model='gemini-2.5-pro',
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    thinking_config=types.ThinkingConfig(
-                        include_thoughts=True
-                    )
-                )
+                contents=user_prompt,
+                config=client_config
             )
             successful_api_call = True
         except (ClientError, ServerError) as e:
@@ -109,26 +110,35 @@ def gemini_predictions(prompt_batch:list[dict], client:genai.Client, technique:s
     """
     
     for prompt_dict in tqdm(prompt_batch, desc="Processing paragraphs..."):
-        # Get prompt information
-        prompt = prompt_dict.get("prompt")
-        paragraph_id = prompt_dict.get("paragraph_id")
+        # Check if we already handled the exact config and prompt
         model = 'gemini-2.5-pro'
+        paragraph_id = prompt_dict.get("paragraph_id")
         prompt_type = prompt_dict.get("prompt_type")
+        
         processed = ih.already_processed(paragraph_id, model, prompt_type, technique)
         if processed:
             # We dont need to waste credits then...
             continue
+
+        system_prompt = None
+        user_prompt = None
+        if technique == 'it-5-shot':
+            system_prompt = prompt_dict.get("message")[0].get("content")
+            user_prompt =  prompt_dict.get("message")[1].get("content")
         else:
-            # Get api response
-            response = do_gemini_api_call(prompt, paragraph_id, client)
-            thoughts, prediction = parse_gemini_response(response)
-            if technique == "CoT":
-                thinking_process = prediction
-                prediction = ih.extract_stance_cot(thinking_process)
-                ih.insert_prediction(paragraph_id, model, prompt_type, technique, prediction, thoughts, thinking_process)
-            else:
-                # Insert pred into db
-                ih.insert_prediction(paragraph_id, model, prompt_type, technique, prediction, thoughts, None)
+            # Get prompt information
+            user_prompt = prompt_dict.get("prompt")
+            
+        # Get api response
+        response = do_gemini_api_call(system_prompt, user_prompt, paragraph_id, client)
+        thoughts, prediction = parse_gemini_response(response)
+        if technique == "CoT":
+            thinking_process = prediction
+            prediction = ih.extract_stance_cot(thinking_process)
+            ih.insert_prediction(paragraph_id, model, prompt_type, technique, prediction, thoughts, thinking_process)
+        else:
+            # Insert pred into db
+            ih.insert_prediction(paragraph_id, model, prompt_type, technique, prediction, thoughts, None)
         
            
 def process_test_set():
@@ -159,13 +169,22 @@ def process_test_set():
     #     prompt_batch_fs10 = ih.get_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot')
     #     gemini_predictions(prompt_batch_fs10, client, technique='10-shot')
 
-    # Process CoT prompts
-    prompt_types_cot = ih.get_prompt_list(cot=True, few_shot=False)
+    # # Process CoT prompts
+    # prompt_types_cot = ih.get_prompt_list(cot=True, few_shot=False)
 
-    for prompt_type in prompt_types_cot:
-        print(f"Calling gemma model with samples and CoT prompt: {prompt_type}...")
-        prompt_batch_cot = ih.get_test_batch(to_be_predicted_batch, prompt_type, cot=True)
-        gemini_predictions(prompt_batch_cot, client, technique='CoT')
+    # for prompt_type in prompt_types_cot:
+    #     print(f"Calling gemma model with samples and CoT prompt: {prompt_type}...")
+    #     prompt_batch_cot = ih.get_test_batch(to_be_predicted_batch, prompt_type, cot=True)
+    #     gemini_predictions(prompt_batch_cot, client, technique='CoT')
+
+    # Process system_prompt_templates
+    prompt_type = "german_vanilla_expert_more_context"
+    # prompt_batch_itfs =  get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots=1)
+    # gemma_split_batch_inference(prompt_batch_itfs, llm, technique='it-1-shot')
+    prompt_batch_itfs =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots=5)
+    gemini_predictions(prompt_batch_itfs, client, technique='it-5-shot')
+    # prompt_batch_itfs =  get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots=10)
+    # gemma_split_batch_inference(prompt_batch_itfs, llm, technique='it-10-shot')
     
 
 def main():
