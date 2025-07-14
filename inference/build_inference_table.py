@@ -30,9 +30,9 @@ def create_inference_table(con:db.DuckDBPyConnection, reset_predictions:bool=Fal
     if reset_predictions:
         con.execute("DROP TABLE IF EXISTS predictions;")
 
-    sql = """
+    test_sql = """
         CREATE TABLE IF NOT EXISTS predictions (
-            id INTEGER NOT NULL REFERENCES engineering_data(id), --CHANGE THIS TO test_data!!!!
+            id INTEGER NOT NULL REFERENCES test_data(id),
             model VARCHAR NOT NULL,
             prompt_type VARCHAR,
             technique VARCHAR NOT NULL, --e.g. 0-shot, k-shot, CoT, etc.
@@ -42,8 +42,21 @@ def create_inference_table(con:db.DuckDBPyConnection, reset_predictions:bool=Fal
             PRIMARY KEY(id, model, prompt_type, technique)
         )
     """
-
-    con.execute(sql)
+    engineering_sql = """
+        CREATE TABLE IF NOT EXISTS engineering_predictions (
+            id INTEGER NOT NULL REFERENCES engineering_data(id), 
+            model VARCHAR NOT NULL,
+            prompt_type VARCHAR,
+            technique VARCHAR NOT NULL, --e.g. 0-shot, k-shot, CoT, etc.
+            prediction VARCHAR(8) CHECK (prediction IN ('favour', 'against', 'neither')),
+            thoughts VARCHAR, -- direct output from an api or <think><\\think} from a reasoning model
+            thinking_process VARCHAR, -- thinking in the output for CoT prompting
+            PRIMARY KEY(id, model, prompt_type, technique)
+        )
+    """
+    
+    con.execute(engineering_sql)
+    con.execute(test_sql)
 
 
 def main():

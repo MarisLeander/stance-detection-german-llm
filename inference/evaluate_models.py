@@ -66,7 +66,7 @@ def create_evaluation_table(con:db.DuckDBPyConnection, reset_db:bool=True):
     con.execute(create_matrix_table_sql)
     con.commit()
     
-def calculate_f1(tp:int, fp:int, tn:int, fn:int) -> int:
+def calculate_f1(tp:int, fp:int, tn:int, fn:int) -> float:
     """
     Calculates precision, recall, and F1 score from TP, FP, TN, and FN,
     with handling for division-by-zero errors.
@@ -108,7 +108,7 @@ def macro_f1_formula(f1_scores:list[str,int]) -> int:
     macro_f1 = total_sum / len(f1_scores)
     return macro_f1
 
-def calculate_strict_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyConnection) -> int:
+def calculate_strict_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyConnection) -> float:
     # Get ids of all predictions for current label
     label_pred_ids = predictions_df[predictions_df['prediction'] == label].id.tolist()
     # Get ids of all prediction for the other labels
@@ -125,7 +125,7 @@ def calculate_strict_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyC
     f1_score = calculate_f1(tp, fp, tn, fn)
     return (f1_score, {"tp":tp, "fp":fp, "tn":tn, "fn":fn})
 
-def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyConnection) -> int:
+def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyConnection) -> float`:
     # Get ids of all predictions for current label
     label_pred_ids = predictions_df[predictions_df['prediction'] == label].id.tolist()
     # Get ids of all prediction for the other labels
@@ -301,15 +301,15 @@ def calculate_macro_f1(predictions_df:pd.DataFrame, failure_rate:int, con:db.Duc
     loose_f1_per_class = []
     for label in labels:
         # For the strict f1 score the model has to predict the agreed on label, which is neither if the annotators labelled different labels.
-        strict_f1_score, matrix_dict = calculate_strict_f1(predictions_df, label, con)
+        strict_f1_score, strict_matrix_dict = calculate_strict_f1(predictions_df, label, con)
         strict_f1_per_class.append({"label":label, 
                                    "strict_f1_score":strict_f1_score, 
-                                   "matrix_dict":matrix_dict})
+                                   "matrix_dict":strict_matrix_dict})
         # For the loose f1 score, the model has only to predict one of the labels each annotator labelled.
-        loose_f1_score, matrix_dict = calculate_loose_f1(predictions_df, label, con)
+        loose_f1_score, loose_matrix_dict = calculate_loose_f1(predictions_df, label, con)
         loose_f1_per_class.append({"label":label, 
                                    "loose_f1_score":loose_f1_score, 
-                                   "matrix_dict":matrix_dict})
+                                   "matrix_dict":loose_matrix_dict})
     # Get all of our strict_f1 scores per label, to calculate the macro_f1
     strict_scores_list = [item['strict_f1_score'] for item in strict_f1_per_class]
     strict_macro_f1 = macro_f1_formula(strict_scores_list)

@@ -40,8 +40,8 @@ def already_processed(paragraph_id:int, model:str, prompt_type:str, technique:st
     con.close()
     return exists
     
-def get_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bool=False) -> list[str]:
-    """ This function returns a list of prompts for the model to benchmark on.
+def get_engineering_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bool=False) -> list[str]:
+    """ This function returns a list of prompts for the model to benchmark on, for prompt_engineering.
 
     Args:
         cot (bool): Indicates wheter the model needs CoT prompts or not
@@ -62,6 +62,29 @@ def get_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bool=False) ->
             return ["it-thinking_guideline", "it-thinking_guideline_higher_standards", "it-german_vanilla", "it-german_vanilla_expert", "it-german_vanilla_expert_more_context", "it-german_more_context", "it-english_vanilla"]
         else:
             return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "german_more_context", "english_vanilla"]
+
+def get_test_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bool=False) -> list[str]:
+    """ This function returns a list of prompts for the model to benchmark on our test data.
+
+    Args:
+        cot (bool): Indicates wheter the model needs CoT prompts or not
+        few_shot (bool): Indicates wheter the model needs few_shot prompts or not
+    """
+    if cot:
+        if it_setup:
+            return ["it-german_vanilla_expert_more_context_cot", "it-thinking_guideline_higher_standards_cot"]
+        else:
+            return ["german_vanilla_expert_more_context_cot", "thinking_guideline_higher_standards_cot"]
+    elif few_shot:
+        if it_setup:
+            return ["it-thinking_guideline_higher_standards"]
+        else:
+            return ["thinking_guideline_higher_standards"]
+    else:
+        if it_setup:
+            return ["it-thinking_guideline_higher_standards"]
+        else:
+            return ["thinking_guideline_higher_standards"]
     
 def get_system_prompt(paragraph_id:int, group:str, prompt_type:str, few_shot:bool=False, shots:str=None) -> str:
     if not few_shot:
@@ -288,6 +311,7 @@ def get_test_batch(batch:pd.DataFrame, prompt_type:str, cot:bool=False, few_shot
 
 
 def get_split_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None) -> list[dict]:
+    #@todo rewrite this
     """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
 
     Args:
@@ -350,22 +374,50 @@ def get_engineering_data(sample_size:int=1):
         SELECT id, inference_paragraph, group_text 
         FROM engineering_data 
             JOIN annotated_paragraphs USING(id) 
-        ORDER BY RANDOM() 
         LIMIT ?
     """
     data = con.execute(sql, (sample_size,)).fetchdf()
     con.close()
     return data
 
-def build_few_shot_examples(test_paragraph_id:int, shots:int) -> str:
-    con = connect_to_db()
-    few_show_sql = """
-        SELECT * 
-        FROM engineering_few_shot_examples fe --CHANGE THIS TO few_shot_examples
-        JOIN annotated_paragraphs ap
-            ON fe.sample_id = ap.id
-        WHERE fe.eng_id = ? AND fe.k_shot = ?
+def get_test_data():
+    """ Function to extract our test data
+
+    Args:
+        None
+
+    Returns:
+        None
     """
+    con = connect_to_db()
+    sql = """
+        SELECT id, inference_paragraph, group_text 
+        FROM test_data 
+            JOIN annotated_paragraphs USING(id);
+    """
+    data = con.execute(sql).fetchdf()
+    con.close()
+    return data
+
+def build_few_shot_examples(test_paragraph_id:int, shots:int, engineering:bool=True) -> str:
+    con = connect_to_db()
+    few_show_sql = ""
+    if engineering:
+        few_show_sql = """
+            SELECT * 
+            FROM engineering_few_shot_examples fe
+            JOIN annotated_paragraphs ap
+                ON fe.sample_id = ap.id
+            WHERE fe.eng_id = ? AND fe.k_shot = ?
+        """
+    else:
+        few_show_sql = """
+            SELECT * 
+            FROM few_shot_examples fe 
+            JOIN annotated_paragraphs ap
+                ON fe.sample_id = ap.id
+            WHERE fe.eng_id = ? AND fe.k_shot = ?
+        """
     few_shot_examples = con.execute(few_show_sql, (test_paragraph_id, shots)).fetchdf()
     example_string = ""
     
@@ -404,7 +456,7 @@ def extract_stance_cot(answer: str) -> str | None:
         # Return None if the pattern was not found
         return None
 
-def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:str, prediction:str, thoughts:str, thinking_process:str=None):
+def insert_prediction(engineering:bool, paragraph_id:int, model:str, prompt_type:str, technique:str, prediction:str, thoughts:str, thinking_process:str=None):
     """ This function is used to insert a models prediction into our db.
 
     Args:
@@ -418,11 +470,19 @@ def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:st
     """
     con = connect_to_db()
     con.begin()
-    sql = """
-        INSERT INTO predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
-        """
+    sql = ""
+    if engineering:
+        sql = """
+            INSERT INTO engineering_predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
+            """
+    else:
+        sql = """
+            INSERT INTO predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
+            """
     # Insert prediction into db
     try:
         con.execute(sql, (paragraph_id, model, prompt_type, technique, prediction, thinking_process, thoughts))
@@ -436,18 +496,27 @@ def insert_prediction(paragraph_id:int, model:str, prompt_type:str, technique:st
         con.commit()
         con.close()
         
-def insert_batch(records:list[dict]):
+def insert_batch(records:list[dict], engineering:bool):
     """ This function is used to insert a models prediction into our db.
     
     Args:
         records (list): the values, to be inserted into db
+        engineering (bool): indicates wheter we are testing on our engineering data or not
     """
     con = connect_to_db()
-    sql = """
-        INSERT INTO predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
-        """
+    sql = ""
+    if engineering:
+        sql = """
+            INSERT INTO engineering_predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
+            """
+    else:
+        sql = """
+            INSERT INTO predictions (id, model, prompt_type, technique, prediction, thinking_process, thoughts) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING --If a certain technique was already benchmarked, do nothing.
+            """
     for record in records:
         con.begin()
         # Unpack the values from the dictionary for the current record

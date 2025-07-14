@@ -24,7 +24,7 @@ def get_gemini_api_key() -> str:
     try:
         with open(path, "r") as config_file:
             config = json.load(config_file)
-        return config.get("gemini_api_key_2")
+        return config.get("gemini_api_key_4")
     except FileNotFoundError:
         print(f"Error: secrets file not found at {path}")
         return None
@@ -146,22 +146,22 @@ def process_test_set():
     client = get_client()
     to_be_predicted_batch = ih.get_engineering_data(sample_size=9999)
 
-    # #  ****** Process it-split-prompts ******
-    # 1. Process zero-shot split-prompts
-    prompt_types = ih.get_prompt_list(cot=False, few_shot=False, it_setup=True)
-    for prompt_type in prompt_types:
-        print(f"Processing {prompt_type}")
-        # Get batch of to-be-processed prompts
-        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type)
-        gemini_predictions(prompt_batch, client, technique='zero-shot', it_setup=True)
+    # # #  ****** Process it-split-prompts ******
+    # # 1. Process zero-shot split-prompts
+    # prompt_types = ih.get_prompt_list(cot=False, few_shot=False, it_setup=True)
+    # for prompt_type in prompt_types:
+    #     print(f"Processing {prompt_type}")
+    #     # Get batch of to-be-processed prompts
+    #     prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type)
+    #     gemini_predictions(prompt_batch, client, technique='zero-shot', it_setup=True)
         
-    # 2. Process cot split-prompts
-    prompt_types = ih.get_prompt_list(cot=True, few_shot=False, it_setup=True)
-    for prompt_type in prompt_types:
-        print(f"Processing {prompt_type}")
-         # Get batch of to-be-processed prompts
-        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type)
-        gemini_predictions(prompt_batch, client, technique='CoT', it_setup=True)
+    # # 2. Process cot split-prompts
+    # prompt_types = ih.get_prompt_list(cot=True, few_shot=False, it_setup=True)
+    # for prompt_type in prompt_types:
+    #     print(f"Processing {prompt_type}")
+    #      # Get batch of to-be-processed prompts
+    #     prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type)
+    #     gemini_predictions(prompt_batch, client, technique='CoT', it_setup=True)
 
     # 3. Process few-shot split-prompts
     prompt_types = ih.get_prompt_list(cot=False, few_shot=True, it_setup=True)
@@ -171,7 +171,7 @@ def process_test_set():
         prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot')
         gemini_predictions(prompt_batch, client, technique='1-shot', it_setup=True)
         print(f"Processing 5-shot for {prompt_type}")
-        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot'5)
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot')
         gemini_predictions(prompt_batch, client, technique='5-shot', it_setup=True)
         print(f"Processing 10-shot for {prompt_type}")
         prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot')
