@@ -86,7 +86,7 @@ def get_test_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bool=Fals
         else:
             return ["thinking_guideline_higher_standards"]
     
-def get_system_prompt(paragraph_id:int, group:str, prompt_type:str, few_shot:bool=False, shots:str=None) -> str:
+def get_system_prompt(paragraph_id:int, group:str, prompt_type:str, few_shot:bool=False, shots:str=None, engineering:bool=False) -> str:
     if not few_shot:
         if prompt_type == "it-thinking_guideline":
             return f"""
@@ -219,7 +219,7 @@ Deine Analyse muss sich **ausschließlich** auf die expliziten Aussagen im vorge
 Bitte denke Schritt für Schritt nach und gebe im Anschluss deine Label in dem Format <stance>label</stance> aus.
 """
     elif few_shot:
-        few_shot_string = build_few_shot_examples(paragraph_id, shots)
+        few_shot_string = build_few_shot_examples(paragraph_id, shots, engineering)
         if prompt_type == 'it-german_vanilla_expert':
             return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
 Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
@@ -271,7 +271,7 @@ Deine Antwort muss **ausschließlich** eines der drei folgenden Wörter enthalte
 {few_shot_string}
 """
 
-def get_test_batch(batch:pd.DataFrame, prompt_type:str, cot:bool=False, few_shot:bool=False, shots:str=None) -> list[dict]:
+def get_test_batch(batch:pd.DataFrame, prompt_type:str, cot:bool=False, few_shot:bool=False, shots:str=None, engineering:bool=False) -> list[dict]:
     """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
 
     Args:
@@ -279,6 +279,7 @@ def get_test_batch(batch:pd.DataFrame, prompt_type:str, cot:bool=False, few_shot
         prompt_type (str): Corresponds to a prompt template
         few_shot (boo): Whether its a few_shot prompt or not
         shots (str): how many shots (e.g. 1,5 or 10)
+        engineering (bool): indicates wheter we are testing on our engineering data or not
 
     Returns:
         list[dict]: Our prompt batch
@@ -294,7 +295,7 @@ def get_test_batch(batch:pd.DataFrame, prompt_type:str, cot:bool=False, few_shot
             if shots is None:
                 raise ValueError('Number of shots have to be specified!')
             else:
-                prompt = get_formatted_few_shot_prompt(paragraph_id, shots, paragraph, group, prompt_type)
+                prompt = get_formatted_few_shot_prompt(paragraph_id, shots, paragraph, group, prompt_type, engineering)
         elif cot:
             prompt = get_formatted_cot_prompt(paragraph, group, prompt_type)
         else:
@@ -310,7 +311,7 @@ def get_test_batch(batch:pd.DataFrame, prompt_type:str, cot:bool=False, few_shot
     return prompt_batch
 
 
-def get_split_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None) -> list[dict]:
+def get_split_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=False, shots:str=None, engineering:bool=False) -> list[dict]:
     #@todo rewrite this
     """ Takes a df of to be annotated data and a prompt type and returns formatted prompts.
 
@@ -319,6 +320,7 @@ def get_split_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=Fals
         prompt_type (str): Corresponds to a prompt template
         few_shot (boo): Whether its a few_shot prompt or not
         shots (int): how many shots (e.g. 1,5 or 10)
+        engineering (bool): indicates wheter we are testing on our engineering data or not
 
     Returns:
         list[dict]: Our prompt batch
@@ -332,7 +334,7 @@ def get_split_test_batch(batch:pd.DataFrame, prompt_type:str, few_shot:bool=Fals
         system_prompt = ""
         user_prompt = get_formatted_user_prompt(paragraph, group)
         if few_shot:
-            system_prompt = get_system_prompt(paragraph_id, group, prompt_type, few_shot, shots)
+            system_prompt = get_system_prompt(paragraph_id, group, prompt_type, few_shot, shots, engineering)
         else:
             system_prompt = get_system_prompt(paragraph_id, group, prompt_type)
         
@@ -399,7 +401,7 @@ def get_test_data():
     con.close()
     return data
 
-def build_few_shot_examples(test_paragraph_id:int, shots:int, engineering:bool=True) -> str:
+def build_few_shot_examples(test_paragraph_id:int, shots:int, engineering:bool=False) -> str:
     con = connect_to_db()
     few_show_sql = ""
     if engineering:
@@ -596,8 +598,8 @@ Zielgruppe: {group}
 Antwort:
 """
 
-def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:str, group:str, prompt_type:str) -> str:
-    few_shot_string = build_few_shot_examples(test_paragraph_id, shots)
+def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:str, group:str, prompt_type:str, engineering:bool) -> str:
+    few_shot_string = build_few_shot_examples(test_paragraph_id, shots, engineering)
     if prompt_type == 'german_vanilla_expert':
         return f"""Du bist ein präziser Analyst für politische Sprache. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer markierten Gruppe zu klassifizieren, basierend auf einem Textabschnitt.
 Führe eine "Stance Detection" durch. Weise dem Sprecher im folgenden Textabschnitt eine Haltung (Stance) gegenüber "{group}" aus [’against’, ’favour’, ’neither’] zu. Gib nur das Label ohne weiteren Text zurück.
