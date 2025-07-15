@@ -4,7 +4,7 @@ import pandas as pd
 from pathlib import Path
 from duckdb import ConstraintException
 
-def connect_to_db() -> db.DuckDBPyConnection:
+def connect_to_db(read_only:bool=False) -> db.DuckDBPyConnection:
     """
     Connect to a DuckDB database.
 
@@ -16,7 +16,7 @@ def connect_to_db() -> db.DuckDBPyConnection:
     """
     home_dir = Path.home()
     db_path = home_dir / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
-    return db.connect(database=db_path, read_only=False)
+    return db.connect(database=db_path, read_only=read_only)
 
 def already_processed(paragraph_id:int, model:str, prompt_type:str, technique:str) -> bool:
     """ Checks if a certain model, prompt_type, technique combination already classified the paragraph.
@@ -35,7 +35,7 @@ def already_processed(paragraph_id:int, model:str, prompt_type:str, technique:st
     sql = "SELECT EXISTS(SELECT 1 FROM predictions WHERE id = ? AND model = ? AND prompt_type = ? AND technique = ?);"
     
     # Execute the query and fetch the single boolean result
-    con = connect_to_db()
+    con = connect_to_db(read_only=True)
     exists = con.execute(sql, (paragraph_id, model, prompt_type, technique)).fetchone()[0]
     con.close()
     return exists
@@ -63,28 +63,28 @@ def get_engineering_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bo
         else:
             return ["thinking_guideline", "thinking_guideline_higher_standards", "german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "german_more_context", "english_vanilla"]
 
-def get_test_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bool=False) -> list[str]:
-    """ This function returns a list of prompts for the model to benchmark on our test data.
+# def get_test_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bool=False) -> list[str]:
+#     """ This function returns a list of prompts for the model to benchmark on our test data.
 
-    Args:
-        cot (bool): Indicates wheter the model needs CoT prompts or not
-        few_shot (bool): Indicates wheter the model needs few_shot prompts or not
-    """
-    if cot:
-        if it_setup:
-            return ["it-german_vanilla_expert_more_context_cot", "it-thinking_guideline_higher_standards_cot"]
-        else:
-            return ["german_vanilla_expert_more_context_cot", "thinking_guideline_higher_standards_cot"]
-    elif few_shot:
-        if it_setup:
-            return ["it-thinking_guideline_higher_standards"]
-        else:
-            return ["thinking_guideline_higher_standards"]
-    else:
-        if it_setup:
-            return ["it-thinking_guideline_higher_standards"]
-        else:
-            return ["thinking_guideline_higher_standards"]
+#     Args:
+#         cot (bool): Indicates wheter the model needs CoT prompts or not
+#         few_shot (bool): Indicates wheter the model needs few_shot prompts or not
+#     """
+#     if cot:
+#         if it_setup:
+#             return ["it-german_vanilla_expert_more_context_cot", "it-thinking_guideline_higher_standards_cot"]
+#         else:
+#             return ["german_vanilla_expert_more_context_cot", "thinking_guideline_higher_standards_cot"]
+#     elif few_shot:
+#         if it_setup:
+#             return ["it-thinking_guideline_higher_standards"]
+#         else:
+#             return ["thinking_guideline_higher_standards"]
+#     else:
+#         if it_setup:
+#             return ["it-thinking_guideline_higher_standards"]
+#         else:
+#             return ["thinking_guideline_higher_standards"]
     
 def get_system_prompt(paragraph_id:int, group:str, prompt_type:str, few_shot:bool=False, shots:str=None, engineering:bool=False) -> str:
     if not few_shot:
@@ -371,7 +371,7 @@ def get_engineering_data(sample_size:int=1):
     Returns:
         None
     """
-    con = connect_to_db()
+    con = connect_to_db(read_only=True)
     sql = """
         SELECT id, inference_paragraph, group_text 
         FROM engineering_data 
@@ -391,7 +391,7 @@ def get_test_data():
     Returns:
         None
     """
-    con = connect_to_db()
+    con = connect_to_db(read_only=True)
     sql = """
         SELECT id, inference_paragraph, group_text 
         FROM test_data 
@@ -402,7 +402,7 @@ def get_test_data():
     return data
 
 def build_few_shot_examples(test_paragraph_id:int, shots:int, engineering:bool=False) -> str:
-    con = connect_to_db()
+    con = connect_to_db(read_only=True)
     few_show_sql = ""
     if engineering:
         few_show_sql = """
@@ -418,7 +418,7 @@ def build_few_shot_examples(test_paragraph_id:int, shots:int, engineering:bool=F
             FROM few_shot_examples fe 
             JOIN annotated_paragraphs ap
                 ON fe.sample_id = ap.id
-            WHERE fe.eng_id = ? AND fe.k_shot = ?
+            WHERE fe.test_id = ? AND fe.k_shot = ?
         """
     few_shot_examples = con.execute(few_show_sql, (test_paragraph_id, shots)).fetchdf()
     example_string = ""
@@ -790,3 +790,8 @@ Paragraph: {paragraph}
 Target: {group}
 Label:
 """
+
+
+if __name__ == '__main__':
+    print("hello")
+    print(build_few_shot_examples(test_paragraph_id=6924663, shots='5-shot', engineering=False))

@@ -125,7 +125,7 @@ def calculate_strict_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyC
     f1_score = calculate_f1(tp, fp, tn, fn)
     return (f1_score, {"tp":tp, "fp":fp, "tn":tn, "fn":fn})
 
-def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyConnection) -> float`:
+def calculate_loose_f1(predictions_df:pd.DataFrame, label:str, con:db.DuckDBPyConnection) -> float:
     # Get ids of all predictions for current label
     label_pred_ids = predictions_df[predictions_df['prediction'] == label].id.tolist()
     # Get ids of all prediction for the other labels
@@ -239,7 +239,7 @@ def insert_label_f1(
     config_id = get_config_id(predictions_df, con)
     insert_sql = "INSERT INTO label_f1 (config_id, label, loose_f1, strict_f1) VALUES (?, ?, ?, ?)"
     con.begin()
-    con.execute(insert_sql, (config_id, label, strict_f1_score, loose_f1_score))
+    con.execute(insert_sql, (config_id, label, loose_f1_score, strict_f1_score))
     con.commit()
 
 def insert_eval_matrix(
