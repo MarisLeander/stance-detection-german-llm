@@ -248,11 +248,11 @@ def process_test_set(llm:vllm.entrypoints.llm.LLM):
         gemma_split_batch_inference(prompt_batch, llm, technique='1-shot', engineering=False)
         print(f"Processing 5-shot for {prompt_type}")
         # Get batch of to-be-processed prompts
-        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot', engineering=False)
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot', engineering=False)
         gemma_split_batch_inference(prompt_batch, llm, technique='5-shot', engineering=False)
         print(f"Processing 10-shot for {prompt_type}")
         # Get batch of to-be-processed prompts
-        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot', engineering=False)
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot', engineering=False)
         gemma_split_batch_inference(prompt_batch, llm, technique='10-shot', engineering=False)
 
     #  ****** Process non-it-split-prompts ******
