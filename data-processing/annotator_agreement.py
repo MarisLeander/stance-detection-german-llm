@@ -1,27 +1,88 @@
 import pandas as pd
-from sklearn.metrics import cohen_kappa_score
+from sklearn.metrics import cohen_kappa_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
 from pathlib import Path
 import duckdb as db
-import matplotlib.pyplot as plt
 import numpy as np
 
-def calculate_overall_kappa(con):
+def calculate_overall_kappa(con: db.DuckDBPyConnection):
+    """ 
+    Calculates Cohen's Kappa and generates a final, styled confusion matrix plot.
+    
+    The plot highlights all values within the main matrix in bold and includes
+    marginal totals in a standard font weight. It is saved as 'confusion_matrix_final.pdf'.
+    """
     # Get dataframe
     df = con.execute("SELECT * FROM annotations WHERE stance <> 'not a group';").fetchdf()
     
-    # Reshape the data so each annotator has their own column.
-    # The 'text_id' aligns the ratings for the same item.
+    # Reshape the data
     pivot_df = df.pivot(index='annotated_paragraph_id', columns='annotator', values='stance').reset_index()
+    pivot_df.dropna(subset=['harriet', 'maris'], inplace=True)
     
-    # These are the two sets of ratings that will be compared.
     annotator_a_labels = pivot_df['harriet']
     annotator_b_labels = pivot_df['maris']
     
-    
-    # calculate cohen's kappa
+    # --- Calculate Cohen's Kappa ---
     kappa_score = cohen_kappa_score(annotator_a_labels, annotator_b_labels)
-    
     print(f"Cohen's Kappa Score: {kappa_score:.4f}")
+
+    # --- Generate and Save Confusion Matrix Plot with Totals ---
+    
+    # Define the order of labels
+    labels = sorted(df['stance'].unique())
+    
+    # Calculate the confusion matrix
+    cm = confusion_matrix(annotator_a_labels, annotator_b_labels, labels=labels)
+    
+    # Calculate row and column sums
+    row_sums = cm.sum(axis=1, keepdims=True)
+    col_sums = cm.sum(axis=0)
+    total_sum = cm.sum()
+
+    # Create a new matrix with totals
+    cm_with_row_totals = np.concatenate([cm, row_sums], axis=1)
+    total_row = np.append(col_sums, total_sum)
+    cm_with_totals = np.concatenate([cm_with_row_totals, [total_row]], axis=0)
+
+    # Create new labels for the heatmap
+    labels_with_total = labels + ['Total']
+    
+    # Create a heatmap plot
+    plt.figure(figsize=(10, 8))
+    sns.set_theme(style="white")
+    heatmap = sns.heatmap(
+        cm_with_totals, 
+        annot=True, 
+        fmt='d', # Use standard integer formatting
+        cmap='Blues',
+        xticklabels=labels_with_total, 
+        yticklabels=labels_with_total,
+        linewidths=.5,
+        annot_kws={"size": 14},
+        cbar=True,
+        cbar_kws={'label': 'Number of Agreements'}
+    )
+    
+
+    # Add lines to separate the main matrix from the totals
+    heatmap.axhline(y=len(labels), color='k', linewidth=2)
+    heatmap.axvline(x=len(labels), color='k', linewidth=2)
+
+    # Set titles and labels
+    plt.title("Confusion Matrix for Annotator Agreement", fontsize=16, pad=20)
+    plt.ylabel("Annotator: Harriet", fontsize=12)
+    plt.xlabel("Annotator: Maris", fontsize=12)
+    plt.xticks(rotation=45, ha="right")
+    plt.yticks(rotation=0)
+
+    # Save the plot to a PDF file
+    plt.savefig('confusion_matrix_final.pdf', bbox_inches='tight')
+    
+    print("Final confusion matrix plot saved as 'confusion_matrix_final.pdf'")
+    
+    # To display the plot if running interactively:
+    # plt.show()
 
 def calculate_kappa_evolution(con):
     data = []
@@ -44,7 +105,7 @@ def calculate_kappa_evolution(con):
         
         # calculate cohen's kappa
         kappa_score = cohen_kappa_score(annotator_a_labels, annotator_b_labels)
-        print(f"Paragraph length:  >={(i - 200)} and <{i}, Cohen's Kappa Score: {kappa_score:.4f}")
+        # print(f"Paragraph length:  >={(i - 200)} and <{i}, Cohen's Kappa Score: {kappa_score:.4f}")
         data.append((i, round(kappa_score, 4), int(df.shape[0] / 2)))
     plot_evolution(data)
 
@@ -241,7 +302,7 @@ def plot_stance_distribution(con, annotator):
 def main():
     home_dir = Path.home()
     db_path = home_dir / "stance-detection-german-llm" / "data" / "database" / "german-parliament.duckdb"
-    con = db.connect(database=db_path, read_only=False)
+    con = db.connect(database=db_path, read_only=True)
     calculate_overall_kappa(con)
     calculate_kappa_evolution(con)
     calculate_agreement_counts(con)

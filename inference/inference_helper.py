@@ -54,9 +54,11 @@ def get_engineering_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bo
             return ["german_vanilla_expert_more_context_cot", "thinking_guideline_higher_standards_cot"]
     elif few_shot:
         if it_setup:
-            return ["it-german_vanilla", "it-german_vanilla_expert", "it-german_vanilla_expert_more_context", "it-thinking_guideline_higher_standards"]
+            #return ["it-german_vanilla", "it-german_vanilla_expert", "it-german_vanilla_expert_more_context", "it-thinking_guideline_higher_standards", "it-thinking_guideline"]
+            return ["it-thinking_guideline"]
         else:
-            return ["german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "thinking_guideline_higher_standards"]
+            # return ["german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "thinking_guideline_higher_standards", "thinking_guideline"]
+            return ["thinking_guideline"]
     else:
         if it_setup:
             return ["it-thinking_guideline", "it-thinking_guideline_higher_standards", "it-german_vanilla", "it-german_vanilla_expert", "it-german_vanilla_expert_more_context", "it-german_more_context", "it-english_vanilla"]
@@ -218,6 +220,31 @@ Deine Analyse muss sich **ausschließlich** auf die expliziten Aussagen im vorge
 **Anforderung an die Antwort:**
 Bitte denke Schritt für Schritt nach und gebe im Anschluss deine Label in dem Format <stance>label</stance> aus.
 """
+
+     elif prompt_type == "thinking_guideline":
+        # Zero shot
+        return f"""
+**Rolle und Ziel:**
+Du bist ein unparteiischer Experte für politische Diskursanalyse. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer spezifischen sozialen Gruppe zu identifizieren.
+
+**Kontext der Aufgabe:**
+Du erhältst einen Textabschnitt aus einer Rede, die im Deutschen Bundestag gehalten wurde. In diesem Text ist die Nennung einer sozialen Gruppe mit `<span>`-Tags markiert. Deine Analyse muss sich ausschließlich auf die Haltung des Sprechers gegenüber dieser markierten Gruppe beziehen, wie sie in diesem spezifischen Abschnitt zum Ausdruck kommt.
+
+**Anweisungen:**
+1.  Lies den bereitgestellten **Textabschnitt** sorgfältig.
+2.  Identifiziere die markierte **Gruppe**.
+3.  Analysiere die Wortwahl, den Ton und den argumentativen Kontext des Sprechers in Bezug auf diese Gruppe.
+4.  Klassifiziere die Haltung des Sprechers in eine der drei folgenden Kategorien.
+
+**Definition der Kategorien:**
+*   **`favour`**: Wähle diese Kategorie, wenn der Sprecher sich positiv, unterstützend, verteidigend oder wohlwollend gegenüber der Gruppe äußert. Dies ist der Fall, wenn der Sprecher die Gruppe lobt, ihre Anliegen als legitim darstellt oder Maßnahmen zu ihrem Vorteil fordert.
+*   **`against`**: Wähle diese Kategorie, wenn der Sprecher sich negativ, kritisch, abwertend oder ablehnend gegenüber der Gruppe äußert. Dies ist der Fall, wenn der Sprecher die Gruppe oder ihre Handlungen kritisiert, vor ihr warnt oder sie für Probleme verantwortlich macht.
+*   **`neither`**: Wähle diese Kategorie, wenn der Sprecher die Gruppe lediglich erwähnt, ohne eine klare positive oder negative Wertung vorzunehmen. Dies umfasst rein informative, statistische oder neutrale Nennungen, oder wenn die Haltung aus dem Abschnitt nicht eindeutig bestimmbar ist.
+
+**Anforderung an die Antwort:**
+Bitte denke Schritt für Schritt nach und gebe im Anschluss deine Label in dem Format <stance>label</stance> aus.
+"""
+         
     elif few_shot:
         few_shot_string = build_few_shot_examples(paragraph_id, shots, engineering)
         if prompt_type == 'it-german_vanilla_expert':
@@ -261,6 +288,34 @@ Deine Analyse muss sich **ausschließlich** auf die expliziten Aussagen im vorge
 *   **`favour`**: Wähle diese Kategorie nur, wenn der Sprecher sich **eindeutig und direkt** positiv, unterstützend oder wohlwollend gegenüber der Gruppe äußert. Die positive Haltung muss unmissverständlich im Text formuliert sein.
 *   **`against`**: Wähle diese Kategorie nur, wenn der Sprecher sich **eindeutig und direkt** negativ, kritisch oder ablehnend gegenüber der Gruppe äußert. Die negative Haltung muss unmissverständlich im Text formuliert sein.
 *   **`neither`**: Dies ist die **Standardkategorie**. Wähle sie, wenn die Gruppe nur neutral erwähnt wird ODER wenn die Haltung des Sprechers ambivalent, unklar oder nicht eindeutig aus dem Text bestimmbar ist. Im Zweifelsfall, wenn die Kriterien für `favour` oder `against` nicht **zweifelsfrei** erfüllt sind, wähle **immer** `neither`.
+
+**Anforderung an die Antwort:**
+Deine Antwort muss **ausschließlich** eines der drei folgenden Wörter enthalten, ohne zusätzliche Erklärungen, Begrüßungen oder Satzzeichen:
+`favour`
+`against`
+`neither`
+
+{few_shot_string}
+"""
+
+        elif prompt_type == "it-thinking_guideline":
+            return f"""
+**Rolle und Ziel:**
+Du bist ein unparteiischer Experte für politische Diskursanalyse. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer spezifischen sozialen Gruppe zu identifizieren.
+
+**Kontext der Aufgabe:**
+Du erhältst einen Textabschnitt aus einer Rede, die im Deutschen Bundestag gehalten wurde. In diesem Text ist die Nennung einer sozialen Gruppe mit `<span>`-Tags markiert. Deine Analyse muss sich ausschließlich auf die Haltung des Sprechers gegenüber dieser markierten Gruppe beziehen, wie sie in diesem spezifischen Abschnitt zum Ausdruck kommt.
+
+**Anweisungen:**
+1.  Lies den bereitgestellten **Textabschnitt** sorgfältig.
+2.  Identifiziere die markierte **Gruppe**.
+3.  Analysiere die Wortwahl, den Ton und den argumentativen Kontext des Sprechers in Bezug auf diese Gruppe.
+4.  Klassifiziere die Haltung des Sprechers in eine der drei folgenden Kategorien.
+
+**Definition der Kategorien:**
+*   **`favour`**: Wähle diese Kategorie, wenn der Sprecher sich positiv, unterstützend, verteidigend oder wohlwollend gegenüber der Gruppe äußert. Dies ist der Fall, wenn der Sprecher die Gruppe lobt, ihre Anliegen als legitim darstellt oder Maßnahmen zu ihrem Vorteil fordert.
+*   **`against`**: Wähle diese Kategorie, wenn der Sprecher sich negativ, kritisch, abwertend oder ablehnend gegenüber der Gruppe äußert. Dies ist der Fall, wenn der Sprecher die Gruppe oder ihre Handlungen kritisiert, vor ihr warnt oder sie für Probleme verantwortlich macht.
+*   **`neither`**: Wähle diese Kategorie, wenn der Sprecher die Gruppe lediglich erwähnt, ohne eine klare positive oder negative Wertung vorzunehmen. Dies umfasst rein informative, statistische oder neutrale Nennungen, oder wenn die Haltung aus dem Abschnitt nicht eindeutig bestimmbar ist.
 
 **Anforderung an die Antwort:**
 Deine Antwort muss **ausschließlich** eines der drei folgenden Wörter enthalten, ohne zusätzliche Erklärungen, Begrüßungen oder Satzzeichen:
@@ -432,7 +487,7 @@ def build_few_shot_examples(test_paragraph_id:int, shots:int, engineering:bool=F
     con.close()
     return example_string
 
-def extract_stance_cot(answer: str) -> str | None:
+def extract_stance_cot(answer: str) -> str:
     """
     Extracts the content from the <stance>-tags from an answer-string, with regex.
 
@@ -440,7 +495,7 @@ def extract_stance_cot(answer: str) -> str | None:
         answer (str): The completes answer-string from the llm
 
     Returns:
-        str | None: The extracted stance value or None if the format was wrong
+        str: The extracted stance value or None if the format was wrong
     """
     # The regex pattern searches for the content between <stance> and </stance>.
     # (.*?) is a “non-greedy” capturing group that captures the text in between.
@@ -598,6 +653,34 @@ Zielgruppe: {group}
 Antwort:
 """
 
+    elif prompt_type == "thinking_guideline":
+        # Zero shot
+        return f"""
+**Rolle und Ziel:**
+Du bist ein unparteiischer Experte für politische Diskursanalyse. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer spezifischen sozialen Gruppe zu identifizieren.
+
+**Kontext der Aufgabe:**
+Du erhältst einen Textabschnitt aus einer Rede, die im Deutschen Bundestag gehalten wurde. In diesem Text ist die Nennung einer sozialen Gruppe mit `<span>`-Tags markiert. Deine Analyse muss sich ausschließlich auf die Haltung des Sprechers gegenüber dieser markierten Gruppe beziehen, wie sie in diesem spezifischen Abschnitt zum Ausdruck kommt.
+
+**Anweisungen:**
+1.  Lies den bereitgestellten **Textabschnitt** sorgfältig.
+2.  Identifiziere die markierte **Gruppe**.
+3.  Analysiere die Wortwahl, den Ton und den argumentativen Kontext des Sprechers in Bezug auf diese Gruppe.
+4.  Klassifiziere die Haltung des Sprechers in eine der drei folgenden Kategorien.
+
+**Definition der Kategorien:**
+*   **`favour`**: Wähle diese Kategorie, wenn der Sprecher sich positiv, unterstützend, verteidigend oder wohlwollend gegenüber der Gruppe äußert. Dies ist der Fall, wenn der Sprecher die Gruppe lobt, ihre Anliegen als legitim darstellt oder Maßnahmen zu ihrem Vorteil fordert.
+*   **`against`**: Wähle diese Kategorie, wenn der Sprecher sich negativ, kritisch, abwertend oder ablehnend gegenüber der Gruppe äußert. Dies ist der Fall, wenn der Sprecher die Gruppe oder ihre Handlungen kritisiert, vor ihr warnt oder sie für Probleme verantwortlich macht.
+*   **`neither`**: Wähle diese Kategorie, wenn der Sprecher die Gruppe lediglich erwähnt, ohne eine klare positive oder negative Wertung vorzunehmen. Dies umfasst rein informative, statistische oder neutrale Nennungen, oder wenn die Haltung aus dem Abschnitt nicht eindeutig bestimmbar ist.
+
+**Anforderung an die Antwort:**
+Bitte denke Schritt für Schritt nach und gebe im Anschluss deine Label in dem Format <stance>label</stance> aus.
+
+Textabschnitt: {paragraph}
+Zielgruppe: {group}
+Antwort:
+"""
+
 def get_formatted_few_shot_prompt(test_paragraph_id:int, shots:int, paragraph:str, group:str, prompt_type:str, engineering:bool) -> str:
     few_shot_string = build_few_shot_examples(test_paragraph_id, shots, engineering)
     if prompt_type == 'german_vanilla_expert':
@@ -650,6 +733,39 @@ Deine Analyse muss sich **ausschließlich** auf die expliziten Aussagen im vorge
 *   **`favour`**: Wähle diese Kategorie nur, wenn der Sprecher sich **eindeutig und direkt** positiv, unterstützend oder wohlwollend gegenüber der Gruppe äußert. Die positive Haltung muss unmissverständlich im Text formuliert sein.
 *   **`against`**: Wähle diese Kategorie nur, wenn der Sprecher sich **eindeutig und direkt** negativ, kritisch oder ablehnend gegenüber der Gruppe äußert. Die negative Haltung muss unmissverständlich im Text formuliert sein.
 *   **`neither`**: Dies ist die **Standardkategorie**. Wähle sie, wenn die Gruppe nur neutral erwähnt wird ODER wenn die Haltung des Sprechers ambivalent, unklar oder nicht eindeutig aus dem Text bestimmbar ist. Im Zweifelsfall, wenn die Kriterien für `favour` oder `against` nicht **zweifelsfrei** erfüllt sind, wähle **immer** `neither`.
+
+**Anforderung an die Antwort:**
+Deine Antwort muss **ausschließlich** eines der drei folgenden Wörter enthalten, ohne zusätzliche Erklärungen, Begrüßungen oder Satzzeichen:
+`favour`
+`against`
+`neither`
+
+{few_shot_string}
+
+Textabschnitt: {paragraph}
+Zielgruppe: {group}
+Antwort:
+"""
+
+    elif prompt_type == "thinking_guideline":
+        # Zero shot
+        return f"""
+**Rolle und Ziel:**
+Du bist ein unparteiischer Experte für politische Diskursanalyse. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer spezifischen sozialen Gruppe zu identifizieren.
+
+**Kontext der Aufgabe:**
+Du erhältst einen Textabschnitt aus einer Rede, die im Deutschen Bundestag gehalten wurde. In diesem Text ist die Nennung einer sozialen Gruppe mit `<span>`-Tags markiert. Deine Analyse muss sich ausschließlich auf die Haltung des Sprechers gegenüber dieser markierten Gruppe beziehen, wie sie in diesem spezifischen Abschnitt zum Ausdruck kommt.
+
+**Anweisungen:**
+1.  Lies den bereitgestellten **Textabschnitt** sorgfältig.
+2.  Identifiziere die markierte **Gruppe**.
+3.  Analysiere die Wortwahl, den Ton und den argumentativen Kontext des Sprechers in Bezug auf diese Gruppe.
+4.  Klassifiziere die Haltung des Sprechers in eine der drei folgenden Kategorien.
+
+**Definition der Kategorien:**
+*   **`favour`**: Wähle diese Kategorie, wenn der Sprecher sich positiv, unterstützend, verteidigend oder wohlwollend gegenüber der Gruppe äußert. Dies ist der Fall, wenn der Sprecher die Gruppe lobt, ihre Anliegen als legitim darstellt oder Maßnahmen zu ihrem Vorteil fordert.
+*   **`against`**: Wähle diese Kategorie, wenn der Sprecher sich negativ, kritisch, abwertend oder ablehnend gegenüber der Gruppe äußert. Dies ist der Fall, wenn der Sprecher die Gruppe oder ihre Handlungen kritisiert, vor ihr warnt oder sie für Probleme verantwortlich macht.
+*   **`neither`**: Wähle diese Kategorie, wenn der Sprecher die Gruppe lediglich erwähnt, ohne eine klare positive oder negative Wertung vorzunehmen. Dies umfasst rein informative, statistische oder neutrale Nennungen, oder wenn die Haltung aus dem Abschnitt nicht eindeutig bestimmbar ist.
 
 **Anforderung an die Antwort:**
 Deine Antwort muss **ausschließlich** eines der drei folgenden Wörter enthalten, ohne zusätzliche Erklärungen, Begrüßungen oder Satzzeichen:
