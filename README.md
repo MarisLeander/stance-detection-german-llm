@@ -1,61 +1,123 @@
-# Description
-This is the repo for my bachelors thesis 
-- Title: Appeal, Align, Divide? Stance Detection on Group-Directed Messaging in German Political Texts Using Large Language Models
-- Submitted to: Data and Web Science Group, Prof. Dr. Simone Paolo Ponzetto, University of Mannheim.
-- Supplementary material, as the build database can be found [here](https://drive.google.com/drive/folders/1ZuMQNow-ZOQVzNSS2GgwxcOnEz5UNhOq?usp=sharing)
+# Appeal, Align, Divide? Stance Detection in German Political Texts
 
-# Requirements
-- For the local run LLM (gemma-3-27b-it) the minimun requirement is a NVIDIA H100 NVL GPU with 94 GB of VRAM is needed
-- A secrets.json needs to be placed in the projects folder to reproduce the output and run the scripts. It has to have the following format:
-  {
-    "gemini_api_key":"YOUR_API_KEY",
-    "huggingface_api_key":"YOUR_API_KEY"
-  }
-- The paths are coded to be respective to the main dir of your system and the project (stance-detection-german-llm) should thus be placed in your systems home_dir.
+This repository contains the code and resources for my Bachelor's thesis.
 
-# Running the Group Mention Classifications
-This is only necesarry, if the mentioned should be re-classified, as the already build db already has the classified mentions.
-## Preliminaries
-To classify the group mentions, the database has to be build. It his highly recommended to download the pre-build database from [here](https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing) to save time. 
-Otherwise the database can also build manually, by parsing the downloaded German parliamentary debates. Those can be downloaded [here](https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing). Then one has to run the notbook save_plenary_minutes.ipynb.
+-   **Title:** *Appeal, Align, Divide? Stance Detection on Group-Directed Messaging in German Political Texts Using Large Language Models*
+-   **Institution:** Data and Web Science Group, Prof. Dr. Simone Paolo Ponzetto, University of Mannheim
+-   **Supplementary Material:** The pre-built database and other materials can be found [here](https://drive.google.com/drive/folders/1ZuMQNow-ZOQVzNSS2GgwxcOnEz5UNhOq?usp=sharing).
 
-# Annotation Data
+---
 
-## Extraction
-To extract data for annoation one simple has to run data-processing/extract_annotation_data.py
+## 📋 Requirements
 
-## Insertion
-To insert annotated data one simply has to run data-processing/process_annotated_data.py with the argument --reset_db passed via CLI, to reset the corresponding tables. The Annotators files have to be placed earlier in the /data/annotated_data folder (see main function).
+### Hardware
+-   To run the local LLM (`gemma-3-27b-it`), a high-performance GPU is required. The minimum requirement is an **NVIDIA H100 NVL GPU with 94 GB of VRAM**.
 
-## Calculate Annotator Agreement
-The Annotator agreement can be calculated with running data-processing/annotator_agreement.py
+### Configuration
+1.  **API Keys:** Create a `secrets.json` file in the project's root directory. It must contain your API keys in the following format:
+    ```json
+    {
+        "gemini_api_key": "YOUR_GEMINI_API_KEY",
+        "huggingface_api_key": "YOUR_HUGGINGFACE_API_KEY"
+    }
+    ```
+2.  **Project Path:** The scripts use relative paths assuming the project folder (`stance-detection-german-llm`) is placed directly in your system's home directory (e.g., `~/stance-detection-german-llm`).
 
-## Run the classifier
-The bert-base-german-cased-finetuned-MOPE-L3_Run\_3_Epochs_29 classifier has to be downloaded from [here](https://github.com/umanlp/mope) and placed into a models folder inside the project folder. Then extract-group-mention/extract_group_mention.py has to be run. The --reset_db argument has to be passed via CLI, to reset the corresponding tables.
+---
 
+## 🚀 Getting Started
 
-# Running the Gemini Model
-First delete the corresponding data from the build database (DELETE FROM predictions WHERE ...)
-## Engineering Dataset
-Just run inference/gemini_engineering_inference.py
-## Test Dataset
-- To allow multi-processing inference/gemini_inference.py has to be called via CLI like this, for each prompt_type / technique combination: python gemini_inference.py --api-key=YOUR_GEMINI_API_KEY --prompt-type=it-thinking_guideline_higher_standards --technique='zero-shot'
-- Then the data has to be inserted into the db like this: INSERT INTO predictions
-    SELECT paragraph_id, model, prompt_type, technique, prediction, thoughts, thinking_process FROM read_csv('it-thinking_guideline_higher_standards_zero-shot.csv')
+### 1. Database Setup
+A database is required to run the classification scripts.
+
+#### Recommended Method (Pre-built)
+It is **highly recommended** to download the pre-built database from [here](https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing) to save time. This database already contains the classified group mentions.
+
+#### Manual Method
+Alternatively, you can build the database from scratch:
+1.  Download the German parliamentary debates from [here](https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing).
+2.  Run the Jupyter notebook `save_plenary_minutes.ipynb` to parse the debates and build the initial database.
+
+### 2. Group Mention Classification
+**Note:** This step is only necessary if you wish to re-classify the group mentions. The pre-built database already includes these classifications.
+
+1.  Download the fine-tuned classifier (`bert-base-german-cased-finetuned-MOPE-L3_Run_3_Epochs_29`) from the official [MOPE repository](https://github.com/umanlp/mope).
+2.  Create a `models/` folder in the project's root directory and place the downloaded classifier inside it.
+3.  Run the extraction script. The `--reset_db` argument must be passed to clear existing data from the relevant tables.
+    ```bash
+    python extract-group-mention/extract_group_mention.py --reset_db
+    ```
+
+---
+
+## ✍️ Annotation Data
+
+This section outlines the process for extracting, inserting, and evaluating annotation data.
+
+### Data Extraction
+To extract a sample of data for annotation, run the following script:
+```bash
+python data-processing/extract_annotation_data.py
+```
+
+### Data Insertion
+To insert manually annotated data back into the database:
+1.  Place the annotators' completed files into the `/data/annotated_data/` folder.
+2.  Run the processing script with the `--reset_db` argument. This will reset the corresponding tables before inserting the new data.
+    ```bash
+    python data-processing/process_annotated_data.py --reset_db
+    ```
+
+### Calculate Annotator Agreement
+To calculate the inter-annotator agreement, run the script:
+```bash
+python data-processing/annotator_agreement.py
+```
+
+---
+
+## 🤖 Running Stance Detection Models
+
+### Gemini Pro
+
+**Important:** Before running a new inference, you may need to manually delete previous predictions from the database (e.g., `DELETE FROM predictions WHERE model = 'gemini-pro'`).
+
+#### Engineering Dataset
+To run inference on the engineering dataset, execute the script:
+```bash
+python inference/gemini_engineering_inference.py
+```
+
+#### Test Dataset
+Inference on the test set is designed to be run in parallel for different configurations.
+
+1.  **Run Inference:** Call the script from the CLI for each `prompt_type` and `technique` combination.
+    ```bash
+    python inference/gemini_inference.py --api-key="YOUR_GEMINI_API_KEY" --prompt-type="it-thinking_guideline_higher_standards" --technique="zero-shot"
+    ```
+    *(A list of available prompt types can be found in `inference/inference_helper.py`)*
+
+2.  **Insert Results:** After the script generates a CSV output file, insert the results into the database using a SQL client:
+    ```sql
+    INSERT INTO predictions (paragraph_id, model, prompt_type, technique, prediction, thoughts, thinking_process)
+    SELECT paragraph_id, model, prompt_type, technique, prediction, thoughts, thinking_process 
+    FROM read_csv('it-thinking_guideline_higher_standards_zero-shot.csv')
     ON CONFLICT DO NOTHING;
-- The prompts which can be called like this can be looked up in the script inference/inference_helper.py
+    ```
 
+### Gemma (Local Model)
 
-# Running the Gemma Model
-## Engineering Dataset
-Just run inference/gemma_inference.py
-## Test Dataset
-Just run inference/gemma_inference.py
+To run inference for both the engineering and test datasets using the local Gemma model, execute the script:
+```bash
+python inference/gemma_inference.py
+```
 
-# Adding new Prompt Types
-New prompt types can be added in the inference_helper.py script
+---
 
-# Known issues
-The inference helper is a bit messy and it would be advised to rewrite this, to dynamically parse prompts from a json file and adjust it for each prompt_type / technique combination
+## 🔧 Customization & Known Issues
 
+### Adding New Prompt Types
+New prompt types for the models can be added by modifying the `inference/inference_helper.py` script.
 
+### Known Issues
+-   The `inference_helper.py` script is complex and could be improved. It is recommended to refactor it to dynamically parse prompts from a structured file (e.g., a JSON file) to better manage the different `prompt_type` and `technique` combinations.
