@@ -95,7 +95,7 @@ Inference on the test set is designed to be run in parallel for different config
     ```bash
     python inference/gemini_inference.py --api-key="YOUR_GEMINI_API_KEY" --prompt-type="it-thinking_guideline_higher_standards" --technique="zero-shot"
     ```
-    *(A list of available prompt types can be found in `inference/inference_helper.py`)*
+    *(Available prompt types can be found in `inference/inference_helper.py`)*
 
 2.  **Insert Results:** After the script generates a CSV output file, insert the results into the database using a SQL client:
     ```sql
