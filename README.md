@@ -107,7 +107,11 @@ Inference on the test set is designed to be run in parallel for different config
 
 ### Gemma-27b-it (Local Model)
 
-To run inference for both the engineering and test datasets using the local Gemma model, execute the script:
+To run inference for both the engineering and test datasets using the local Gemma model, execute the scripts:
+```bash
+python inference/gemma_engineering_inference.py
+```
+
 ```bash
 python inference/gemma_inference.py
 ```
