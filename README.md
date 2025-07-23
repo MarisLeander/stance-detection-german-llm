@@ -2,7 +2,7 @@
 This is the repo for my bachelors thesis 
 - Title: Appeal, Align, Divide? Stance Detection on Group-Directed Messaging in German Political Texts Using Large Language Models
 - Submitted to: Data and Web Science Group, Prof. Dr. Simone Paolo Ponzetto, University of Mannheim.
-- Supplementary material, as the build database can be found here: https://drive.google.com/drive/folders/1ZuMQNow-ZOQVzNSS2GgwxcOnEz5UNhOq?usp=sharing
+- Supplementary material, as the build database can be found [here](https://drive.google.com/drive/folders/1ZuMQNow-ZOQVzNSS2GgwxcOnEz5UNhOq?usp=sharing)
 
 # Requirements
 - For the local run LLM (gemma-3-27b-it) the minimun requirement is a NVIDIA H100 NVL GPU with 94 GB of VRAM is needed
@@ -16,8 +16,8 @@ This is the repo for my bachelors thesis
 # Running the Group Mention Classifications
 This is only necesarry, if the mentioned should be re-classified, as the already build db already has the classified mentions.
 ## Preliminaries
-To classify the group mentions, the database has to be build. It his highly recommended to download the pre-build database from [here]{https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing} to save time. 
-Otherwise the database can also build manually, by parsing the downloaded German parliamentary debates. Those can be downloaded [here]{https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing}. Then one has to run the notbook save_plenary_minutes.ipynb.
+To classify the group mentions, the database has to be build. It his highly recommended to download the pre-build database from [here](https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing) to save time. 
+Otherwise the database can also build manually, by parsing the downloaded German parliamentary debates. Those can be downloaded [here](https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing). Then one has to run the notbook save_plenary_minutes.ipynb.
 
 # Annotation Data
 
@@ -31,7 +31,7 @@ To insert annotated data one simply has to run data-processing/process_annotated
 The Annotator agreement can be calculated with running data-processing/annotator_agreement.py
 
 ## Run the classifier
-The bert-base-german-cased-finetuned-MOPE-L3_Run\_3_Epochs_29 classifier has to be downloaded from [here]{https://github.com/umanlp/mope} and placed into a models folder inside the project folder. Then extract-group-mention/extract_group_mention.py has to be run. The --reset_db argument has to be passed via CLI, to reset the corresponding tables.
+The bert-base-german-cased-finetuned-MOPE-L3_Run\_3_Epochs_29 classifier has to be downloaded from [here](https://github.com/umanlp/mope) and placed into a models folder inside the project folder. Then extract-group-mention/extract_group_mention.py has to be run. The --reset_db argument has to be passed via CLI, to reset the corresponding tables.
 
 
 # Running the Gemini Model
