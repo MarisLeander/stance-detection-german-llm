@@ -12,7 +12,7 @@ This is the repo for my bachelors thesis
     "huggingface_api_key":"YOUR_API_KEY"
   }
 - The paths are coded to be respective to the main dir of your system and the project (stance-detection-german-llm) should thus be placed in your systems home_dir.
-- 
+
 # Running the Group Mention Classifications
 This is only necesarry, if the mentioned should be re-classified, as the already build db already has the classified mentions.
 ## Preliminaries
