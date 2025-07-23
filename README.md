@@ -80,7 +80,7 @@ python data-processing/annotator_agreement.py
 
 ### Gemini Pro
 
-**Important:** Before running a new inference, you may need to manually delete previous predictions from the database (e.g., `DELETE FROM predictions WHERE model = 'gemini-pro'`).
+**Important:** Before running a new inference, you may need to manually delete previous predictions from the database (e.g., `DELETE FROM predictions WHERE [CONDITION]'`).
 
 #### Engineering Dataset
 To run inference on the engineering dataset, execute the script:
