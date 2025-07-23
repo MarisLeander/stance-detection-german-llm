@@ -12,3 +12,29 @@ This is the repo for my bachelors thesis
     "huggingface_api_key":"YOUR_API_KEY"
   }
 
+# Running the Group Mention Classifications
+This is only necesarry, if the mentioned should be re-classified, as the already build db already has the classified mentions.
+## Preliminaries
+To classify the group mentions, the database has to be build. It his highly recommended to download the pre-build database from [here]{https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing} to save time. 
+Otherwise the database can also build manually, by parsing the downloaded German parliamentary debates. Those can be downloaded [here]{https://drive.google.com/drive/folders/1cO_2MmCOKK2pqSWUgwWIKWYSs3Pux8RG?usp=sharing}. Then one has to run the notbook save_plenary_minutes.ipynb.
+
+# Annotation Data
+## Extraction
+To extract data for annoation one simple has to run data-processing/extract_annotation_data.py
+## Insertion
+To insert annotated data one simply has to run data-processing/process_annotated_data.py with the argument --reset_db passed via CLI, to reset the corresponding tables. The Annotators files have to be placed earlier in the /data/annotated_data folder (see main function).
+
+## Run the classifier
+The bert-base-german-cased-finetuned-MOPE-L3_Run\_3_Epochs_29 classifier has to be downloaded from [here]{https://github.com/umanlp/mope} and placed into a models folder inside the project folder. Then extract-group-mention/extract_group_mention.py has to be run. The --reset_db argument has to be passed via CLI, to reset the corresponding tables.
+
+
+# Running the Gemini Model
+## Engineering Dataset
+## Test Dataset
+
+# Running the Gemma Model
+## Engineering Dataset
+## Test Dataset
+
+# Adding new Prompt Types
+
