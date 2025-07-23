@@ -49,16 +49,16 @@ def get_engineering_prompt_list(cot:bool=False, few_shot:bool=False, it_setup:bo
     """
     if cot:
         if it_setup:
-            return ["it-german_vanilla_expert_more_context_cot", "it-thinking_guideline_higher_standards_cot"]
+            return ["it-german_vanilla_expert_more_context_cot", "it-thinking_guideline_higher_standards_cot", "it-thinking_guideline_cot"]
         else:
-            return ["german_vanilla_expert_more_context_cot", "thinking_guideline_higher_standards_cot"]
+            return ["german_vanilla_expert_more_context_cot", "thinking_guideline_higher_standards_cot", "thinking_guideline_cot"]
     elif few_shot:
         if it_setup:
-            #return ["it-german_vanilla", "it-german_vanilla_expert", "it-german_vanilla_expert_more_context", "it-thinking_guideline_higher_standards", "it-thinking_guideline"]
-            return ["it-thinking_guideline"]
+            return ["it-german_vanilla", "it-german_vanilla_expert", "it-german_vanilla_expert_more_context", "it-thinking_guideline_higher_standards", "it-thinking_guideline"]
+            # return ["it-thinking_guideline_higher_standards"]
         else:
-            # return ["german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "thinking_guideline_higher_standards", "thinking_guideline"]
-            return ["thinking_guideline"]
+            return ["german_vanilla", "german_vanilla_expert", "german_vanilla_expert_more_context", "thinking_guideline_higher_standards", "thinking_guideline"]
+            # return ["thinking_guideline_higher_standards"]
     else:
         if it_setup:
             return ["it-thinking_guideline", "it-thinking_guideline_higher_standards", "it-german_vanilla", "it-german_vanilla_expert", "it-german_vanilla_expert_more_context", "it-german_more_context", "it-english_vanilla"]
@@ -221,9 +221,9 @@ Deine Analyse muss sich **ausschließlich** auf die expliziten Aussagen im vorge
 Bitte denke Schritt für Schritt nach und gebe im Anschluss deine Label in dem Format <stance>label</stance> aus.
 """
 
-     elif prompt_type == "thinking_guideline":
+        elif prompt_type == "it-thinking_guideline_cot":
         # Zero shot
-        return f"""
+            return f"""
 **Rolle und Ziel:**
 Du bist ein unparteiischer Experte für politische Diskursanalyse. Deine Aufgabe ist es, die Haltung (Stance) eines Sprechers gegenüber einer spezifischen sozialen Gruppe zu identifizieren.
 
@@ -653,7 +653,7 @@ Zielgruppe: {group}
 Antwort:
 """
 
-    elif prompt_type == "thinking_guideline":
+    elif prompt_type == "thinking_guideline_cot":
         # Zero shot
         return f"""
 **Rolle und Ziel:**

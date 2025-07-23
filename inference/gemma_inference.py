@@ -222,14 +222,16 @@ def process_engineering_set(llm:vllm.entrypoints.llm.LLM):
 def process_test_set(llm:vllm.entrypoints.llm.LLM):
     # # Get our test_data
     to_be_predicted_batch = ih.get_test_data()
-    # # ****** Process it-split-prompts ******
-    # # 1. Process zero-shot split-prompts
-    # prompt_types = ih.get_engineering_prompt_list(cot=False, few_shot=False, it_setup=True)
-    # for prompt_type in prompt_types:
-    #     print(f"Processing {prompt_type}")
-    #     # Get batch of to-be-processed prompts
-    #     prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, engineering=False)
-    #     gemma_split_batch_inference(prompt_batch, llm, technique='zero-shot', engineering=False)
+
+    
+    # ****** Process it-split-prompts ******
+    # 1. Process zero-shot split-prompts
+    prompt_types = ih.get_engineering_prompt_list(cot=False, few_shot=False, it_setup=True)
+    for prompt_type in prompt_types:
+        print(f"Processing {prompt_type}")
+        # Get batch of to-be-processed prompts
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, engineering=False)
+        gemma_split_batch_inference(prompt_batch, llm, technique='zero-shot', engineering=False)
         
     # 2. Process cot split-prompts
     prompt_types = ih.get_engineering_prompt_list(cot=True, few_shot=False, it_setup=True)
@@ -239,32 +241,32 @@ def process_test_set(llm:vllm.entrypoints.llm.LLM):
         prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, engineering=False)
         gemma_split_batch_inference(prompt_batch, llm, technique='CoT', engineering=False)
 
-    # # 3. Process few-shot split-prompts
-    # prompt_types = ih.get_engineering_prompt_list(cot=False, few_shot=True, it_setup=True)
-    # for prompt_type in prompt_types:
-    #     print(f"Processing 1-shot for {prompt_type}")
-    #     # Get batch of to-be-processed prompts
-    #     prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot', engineering=False)
-    #     gemma_split_batch_inference(prompt_batch, llm, technique='1-shot', engineering=False)
-    #     print(f"Processing 5-shot for {prompt_type}")
-    #     # Get batch of to-be-processed prompts
-    #     prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot', engineering=False)
-    #     gemma_split_batch_inference(prompt_batch, llm, technique='5-shot', engineering=False)
-    #     print(f"Processing 10-shot for {prompt_type}")
-    #     # Get batch of to-be-processed prompts
-    #     prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot', engineering=False)
-    #     gemma_split_batch_inference(prompt_batch, llm, technique='10-shot', engineering=False)
+    # 3. Process few-shot split-prompts
+    prompt_types = ih.get_engineering_prompt_list(cot=False, few_shot=True, it_setup=True)
+    for prompt_type in prompt_types:
+        print(f"Processing 1-shot for {prompt_type}")
+        # Get batch of to-be-processed prompts
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='1-shot', engineering=False)
+        gemma_split_batch_inference(prompt_batch, llm, technique='1-shot', engineering=False)
+        print(f"Processing 5-shot for {prompt_type}")
+        # Get batch of to-be-processed prompts
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='5-shot', engineering=False)
+        gemma_split_batch_inference(prompt_batch, llm, technique='5-shot', engineering=False)
+        print(f"Processing 10-shot for {prompt_type}")
+        # Get batch of to-be-processed prompts
+        prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots='10-shot', engineering=False)
+        gemma_split_batch_inference(prompt_batch, llm, technique='10-shot', engineering=False)
 
-    #  ****** Process non-it-split-prompts ******
+     # ****** Process non-it-split-prompts ******
     # 1. Process zero-shot non split-prompts
-    # prompt_types = ih.get_engineering_prompt_list(cot=False, few_shot=False, it_setup=False)
-    # for prompt_type in prompt_types:
-    #     print(f"Processing {prompt_type}")
-    #     # Get batch of to-be-processed prompts
-    #     prompt_batch =  ih.get_test_batch(to_be_predicted_batch, prompt_type, engineering=False)
-    #     gemma_batch_inference(prompt_batch, llm, technique='zero-shot', engineering=False)
+    prompt_types = ih.get_engineering_prompt_list(cot=False, few_shot=False, it_setup=False)
+    for prompt_type in prompt_types:
+        print(f"Processing {prompt_type}")
+        # Get batch of to-be-processed prompts
+        prompt_batch =  ih.get_test_batch(to_be_predicted_batch, prompt_type, engineering=False)
+        gemma_batch_inference(prompt_batch, llm, technique='zero-shot', engineering=False)
 
-    # 2. Process cot non split-prompts
+    #2. Process cot non split-prompts
     prompt_types = ih.get_engineering_prompt_list(cot=True, few_shot=False, it_setup=False)
     for prompt_type in prompt_types:
         print(f"Processing {prompt_type}")
