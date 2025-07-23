@@ -78,7 +78,7 @@ python data-processing/annotator_agreement.py
 
 ## 🤖 Running Stance Detection Models
 
-### Gemini Pro
+### Gemini-2.5-Pro
 
 **Important:** Before running a new inference, you may need to manually delete previous predictions from the database (e.g., `DELETE FROM predictions WHERE [CONDITION]'`).
 
@@ -105,7 +105,7 @@ Inference on the test set is designed to be run in parallel for different config
     ON CONFLICT DO NOTHING;
     ```
 
-### Gemma (Local Model)
+### Gemma-27b-it (Local Model)
 
 To run inference for both the engineering and test datasets using the local Gemma model, execute the script:
 ```bash
