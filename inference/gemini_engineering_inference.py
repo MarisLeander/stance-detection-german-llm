@@ -28,7 +28,7 @@ def get_gemini_api_key() -> str:
     try:
         with open(path, "r") as config_file:
             config = json.load(config_file)
-        return config.get("gemini_api_key")
+        return config.get("gemini_api_key_4")
     except FileNotFoundError:
         print(f"Error: secrets file not found at {path}")
         return None
@@ -265,78 +265,11 @@ def process_engineering_set():
         print(f"Calling gemma model with samples and CoT prompt: {prompt_type}...")
         prompt_batch_cot = ih.get_test_batch(to_be_predicted_batch, prompt_type, cot=True, engineering=True)
         gemini_predictions(prompt_batch_cot, client, technique='CoT', engineering=True)
-
-
-
-def process_test_set(api_key:str, prompt_type:str, technique:str, shots:str=None):
-    client = genai.Client(api_key=api_key)
-    to_be_predicted_batch = ih.get_test_data()
-    
-    it_setup = False
-
-    if prompt_type.startswith("it-"):
-        it_setup = True    
-        
-    prompt_batch = None
-    
-    if it_setup:    
-        if shots:
-            print("Preparing few-shot examples....")
-            prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, few_shot=True, shots=shots, engineering=False)
-        else:
-            prompt_batch =  ih.get_split_test_batch(to_be_predicted_batch, prompt_type, engineering=False)
-    elif not it_setup and technique == "CoT":
-        prompt_batch = ih.get_test_batch(to_be_predicted_batch, prompt_type, cot=True, engineering=True)
-    
-    (f"Processing {prompt_type}")
-    gemini_predictions(prompt_batch, client, technique, it_setup=it_setup, engineering=False)
         
     
 
 def main():
-    #process_engineering_set()
-    # 1. Set up the argument parser with a description
-    parser = argparse.ArgumentParser(
-        description="Run Gemini inference for a specific prompt configuration.",
-        formatter_class=argparse.RawTextHelpFormatter # For better help text formatting
-    )
-    
-    # 2. Add arguments
-    parser.add_argument(
-        "--api-key", 
-        type=str, 
-        required=True, 
-        help="Your Google Gemini API key."
-    )
-    parser.add_argument(
-        "--prompt-type", 
-        type=str, 
-        required=True, 
-        help="The specific prompt template to use.\n(e.g., 'it-thinking_guideline_higher_standards')"
-    )
-    parser.add_argument(
-        "--technique", 
-        type=str, 
-        required=True, 
-        help="The prompting technique to record in the database.\n(e.g., 'zero-shot', 'CoT', '1-shot')"
-    )
-    parser.add_argument(
-        "--shots", 
-        type=str, 
-        default=None, 
-        help="The number of shots for few-shot prompting.\n(e.g., '1-shot', '5-shot').\nDefaults to None if not provided."
-    )
-    
-    # 3. Parse the arguments from the command line
-    args = parser.parse_args()
-    
-    # 4. Call the processing function with the provided arguments
-    process_test_set(
-        api_key=args.api_key,
-        prompt_type=args.prompt_type,
-        technique=args.technique,
-        shots=args.shots
-    )
+    process_engineering_set()
 
 if __name__ == "__main__":
     main()
