@@ -78,9 +78,13 @@ python data-processing/annotator_agreement.py
 
 ## 🤖 Running Stance Detection Models
 
+- **Important:** Before running a new inference, you may need to manually delete previous predictions from the database (e.g., `DELETE FROM [engineering_predictions, predictions] WHERE [CONDITION]'`).
+- The whole database for predictions can be reset with running 
+  ```bash
+  inference/build_inference_table.py --reset_predictions
+  ```
+    
 ### Gemini-2.5-Pro
-
-**Important:** Before running a new inference, you may need to manually delete previous predictions from the database (e.g., `DELETE FROM predictions WHERE [CONDITION]'`).
 
 #### Engineering Dataset
 To run inference on the engineering dataset, execute the script:
@@ -93,7 +97,7 @@ Inference on the test set is designed to be run in parallel for different config
 
 1.  **Run Inference:** Call the script from the CLI for each `prompt_type` and `technique` combination.
     ```bash
-    python inference/gemini_inference.py --api-key="YOUR_GEMINI_API_KEY" --prompt-type="it-thinking_guideline_higher_standards" --technique="zero-shot"
+    python inference/gemini_inference.py --api-key=YOUR_GEMINI_API_KEY --prompt-type=it-thinking_guideline_higher_standards --technique=zero-shot
     ```
     *(Available prompt types can be found in `inference/inference_helper.py`)*
 
@@ -116,6 +120,14 @@ python inference/gemma_engineering_inference.py
 python inference/gemma_inference.py
 ```
 
+---
+## 📈 Evaluate Results
+
+1. Run inference/evaluate_models.py
+2. Query the corresponding database tables (model_evaluation, label_f1, eval_matrix using SQL:
+   ```sql
+   SELECT * FROM model_evaluation ORDER BY strict_macro_f1 DESC; --As an example
+   ```
 ---
 
 ## 🔧 Customization & Known Issues
