@@ -78,7 +78,7 @@ python data-processing/annotator_agreement.py
 
 ## 🤖 Running Stance Detection Models
 
-- **Important:** Before running a new inference, you may need to manually delete previous predictions from the database (e.g., `DELETE FROM [engineering_predictions, predictions] WHERE [CONDITION]'`).
+- **Important:** Before running a new inference, you may need to manually delete previous predictions from the database (e.g., `DELETE FROM [engineering_predictions, predictions] WHERE [CONDITION]'`). This is the **recommended** way, to avoid deleting prior results.
 - The whole database for predictions can be reset with running:
   ```bash
   inference/build_inference_table.py --reset_predictions
