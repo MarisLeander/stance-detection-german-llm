@@ -123,8 +123,12 @@ python inference/gemma_inference.py
 ---
 ## 📈 Evaluate Results
 
-1. Run inference/evaluate_models.py
-2. Query the corresponding database tables (model_evaluation, label_f1, eval_matrix using SQL:
+1. Run the following script with either `--dataset=test` or `--dataset=engineering`, to respectively evaluate the engineering or test dataset:
+   ```bash
+   python inference/evaluate_models.py --dataset=test
+   ```
+3. inference/evaluate_models.py
+4. Query the corresponding database tables (model_evaluation, label_f1, eval_matrix using SQL:
    ```sql
    SELECT * FROM model_evaluation ORDER BY strict_macro_f1 DESC; --As an example
    ```
